@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "blender-mcp": {
+      "command": "/absolute/path/to/blender-mcp/.venv/bin/python",
+      "args": [
+        "-m",
+        "mcp_server.main",
+        "--transport",
+        "stdio"
+      ],
+      "env": {
+        "BLENDER_MCP_WORKSPACE_ROOTS": "/absolute/path/to/blender-mcp/workspace",
+        "BLENDER_MCP_CONTROLLER_MODE": "blender",
+        "BLENDER_MCP_BLENDER_BINARY": "/absolute/path/to/Blender",
+        "BLENDER_MCP_SAFE_MODE_DEFAULT": "true"
+      }
+    }
+  }
+}
