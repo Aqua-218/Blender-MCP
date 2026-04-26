@@ -1,0 +1,81 @@
+{
+  "$id": "https://blender-mcp.local/schemas/common-request.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "instruction": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Natural-language instruction for the tool."
+    },
+    "preview_after": {
+      "default": true,
+      "type": "boolean"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "quality": {
+      "default": "standard",
+      "enum": [
+        "draft",
+        "standard",
+        "high",
+        "hero"
+      ],
+      "type": "string"
+    },
+    "request_id": {
+      "description": "Client-generated correlation identifier.",
+      "minLength": 1,
+      "type": "string"
+    },
+    "safe_mode": {
+      "default": true,
+      "type": "boolean"
+    },
+    "seed": {
+      "default": 0,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "style": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "target_ids": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_id"
+  ],
+  "title": "CommonToolRequest",
+  "type": "object"
+}
