@@ -12,7 +12,7 @@ flowchart TB
         Client[MCP Client]:::infra
     end
 
-    subgraph ServerSide[Blender AI MCP Server Process]
+    subgraph ServerSide[Blender MCP Server Process]
         FastMCP[FastMCP Tool Surface]:::app
         Policy[Schema Validation and Safety Policy]:::app
         Orchestrator[Job Orchestrator and Target Resolver]:::app
