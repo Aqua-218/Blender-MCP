@@ -1,0 +1,32 @@
+{
+  "name": "Blender MCP",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "forwardPorts": [8765, 8766],
+  "portsAttributes": {
+    "8765": {
+      "label": "Blender MCP HTTP debug"
+    },
+    "8766": {
+      "label": "Blender controller bridge"
+    }
+  },
+  "remoteEnv": {
+    "BLENDER_MCP_WORKSPACE_ROOTS": "${containerWorkspaceFolder}/workspace",
+    "BLENDER_MCP_CONTROLLER_MODE": "mock"
+  },
+  "postCreateCommand": "python -m pip install --upgrade pip && python -m pip install -e '.[dev]' && pre-commit install --install-hooks --hook-type pre-commit --hook-type commit-msg --hook-type pre-push",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "redhat.vscode-yaml"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "python.defaultInterpreterPath": "/usr/local/bin/python"
+      }
+    }
+  }
+}
