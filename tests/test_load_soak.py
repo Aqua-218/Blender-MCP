@@ -4,7 +4,6 @@ import asyncio
 from pathlib import Path
 
 import pytest
-
 from mcp_server.config import ServerSettings
 from mcp_server.server import MCPServerApplication
 from tests.port_utils import find_free_port
