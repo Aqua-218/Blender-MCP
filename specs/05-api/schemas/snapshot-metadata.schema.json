@@ -1,5 +1,5 @@
 {
-  "$id": "https://blender-mcp.local/schemas/snapshot-metadata.schema.json",
+  "$id": "urn:blender-mcp:schema:snapshot-metadata",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
