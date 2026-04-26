@@ -1,0 +1,60 @@
+{
+  "$id": "https://blender-mcp.local/schemas/part-spec.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "detail_level": {
+      "default": "base",
+      "type": "string"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "metadata": {
+      "default": {},
+      "type": "object"
+    },
+    "name": {
+      "type": "string"
+    },
+    "parent_part_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "part_id": {
+      "type": "string"
+    },
+    "symmetrical_with": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "tags": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "part_id",
+    "name",
+    "kind"
+  ],
+  "title": "PartSpec",
+  "type": "object"
+}
