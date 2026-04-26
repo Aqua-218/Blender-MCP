@@ -1,0 +1,91 @@
+{
+  "$id": "https://blender-mcp.local/schemas/operation-log.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "created_object_ids": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "deleted_object_ids": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "errors": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "file_paths": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "image_paths": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "input_params": {
+      "default": {},
+      "type": "object"
+    },
+    "modified_object_ids": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "operation_id": {
+      "type": "string"
+    },
+    "output_summary": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "tool_name": {
+      "type": "string"
+    },
+    "user_instruction": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "warnings": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "operation_id",
+    "timestamp",
+    "tool_name",
+    "output_summary"
+  ],
+  "title": "OperationLog",
+  "type": "object"
+}
