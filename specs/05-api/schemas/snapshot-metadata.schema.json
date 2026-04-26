@@ -1,0 +1,53 @@
+{
+  "$id": "https://blender-mcp.local/schemas/snapshot-metadata.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "created_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "diff_summary_json": {
+      "default": {},
+      "type": "object"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "reason": {
+      "enum": [
+        "pre_destructive_change",
+        "manual",
+        "milestone",
+        "rollback_target"
+      ],
+      "type": "string"
+    },
+    "snapshot_id": {
+      "type": "string"
+    },
+    "snapshot_path": {
+      "type": "string"
+    },
+    "source_operation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "snapshot_id",
+    "project_id",
+    "reason",
+    "snapshot_path",
+    "created_at"
+  ],
+  "title": "SnapshotMetadata",
+  "type": "object"
+}
