@@ -1,4 +1,4 @@
-# Blender AI MCP Specification Suite
+# Blender MCP Specification Suite
 
 ## Purpose
 
