@@ -1,0 +1,60 @@
+name: Feature request
+description: Propose a new capability or workflow improvement for Blender MCP
+title: "[Feature]: "
+labels:
+  - enhancement
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for proposing an improvement.
+
+        The most useful requests explain the workflow problem, safety constraints, and expected tool or schema impact.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What user workflow is blocked or inefficient today?
+      placeholder: Describe the real-world workflow problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the tool, API, or contributor-experience improvement you want.
+      placeholder: Explain the expected behavior and why it should belong in Blender MCP.
+    validations:
+      required: true
+
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and policy considerations
+      description: What constraints, limits, or validation rules should apply?
+      placeholder: Workspace bounds, destructive-operation safeguards, performance budgets, auth expectations, and so on.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds or competing approaches did you consider?
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Example payloads or workflows
+      description: Include sample request or response shapes, or describe the MCP client flow.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched for existing issues and roadmap items before opening this request.
+          required: true
+        - label: This request does not require unsafe shell execution or unrestricted filesystem access.
+          required: true
