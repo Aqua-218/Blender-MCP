@@ -32,55 +32,57 @@ SCHEMA_MODELS = {
     "export-record.schema.json": ExportRecord,
 }
 
+SCHEMA_ID_PREFIX = "urn:blender-mcp:schema:"
+
 PUBLIC_SCHEMA_METADATA = {
     "common-request.schema.json": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://blender-mcp.local/schemas/common-request.schema.json",
+        "$id": f"{SCHEMA_ID_PREFIX}common-request",
         "title": "CommonToolRequest",
     },
     "common-result.schema.json": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://blender-mcp.local/schemas/common-result.schema.json",
+        "$id": f"{SCHEMA_ID_PREFIX}common-result",
         "title": "CommonToolResult",
     },
     "asset-spec.schema.json": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://blender-mcp.local/schemas/asset-spec.schema.json",
+        "$id": f"{SCHEMA_ID_PREFIX}asset-spec",
         "title": "AssetSpec",
     },
     "scene-spec.schema.json": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://blender-mcp.local/schemas/scene-spec.schema.json",
+        "$id": f"{SCHEMA_ID_PREFIX}scene-spec",
         "title": "SceneSpec",
     },
     "world-spec.schema.json": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://blender-mcp.local/schemas/world-spec.schema.json",
+        "$id": f"{SCHEMA_ID_PREFIX}world-spec",
         "title": "WorldSpec",
     },
     "operation-log.schema.json": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://blender-mcp.local/schemas/operation-log.schema.json",
+        "$id": f"{SCHEMA_ID_PREFIX}operation-log",
         "title": "OperationLog",
     },
     "part-spec.schema.json": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://blender-mcp.local/schemas/part-spec.schema.json",
+        "$id": f"{SCHEMA_ID_PREFIX}part-spec",
         "title": "PartSpec",
     },
     "qa-report.schema.json": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://blender-mcp.local/schemas/qa-report.schema.json",
+        "$id": f"{SCHEMA_ID_PREFIX}qa-report",
         "title": "QAReport",
     },
     "snapshot-metadata.schema.json": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://blender-mcp.local/schemas/snapshot-metadata.schema.json",
+        "$id": f"{SCHEMA_ID_PREFIX}snapshot-metadata",
         "title": "SnapshotMetadata",
     },
     "export-record.schema.json": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://blender-mcp.local/schemas/export-record.schema.json",
+        "$id": f"{SCHEMA_ID_PREFIX}export-record",
         "title": "ExportRecord",
     },
 }
