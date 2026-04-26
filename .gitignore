@@ -1,13 +1,20 @@
 __pycache__/
 .mypy_cache/
+.nox/
+.pre-commit-cache/
 .pytest_cache/
 .ruff_cache/
+.tox/
 .venv/
 venv/
 dist/
 build/
 *.egg-info/
 *.pyc
+.coverage
+.coverage.*
+htmlcov/
+.DS_Store
 
 .env
 *.log
