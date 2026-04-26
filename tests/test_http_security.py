@@ -8,7 +8,6 @@ from http.client import HTTPConnection
 from pathlib import Path
 
 import pytest
-
 from mcp_server.config import ServerSettings
 from mcp_server.serialization import json_loads
 from mcp_server.server import MCPServerApplication
