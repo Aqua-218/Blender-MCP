@@ -1,4 +1,4 @@
-# Blender AI MCP Implementation TODO
+# Blender MCP Implementation TODO
 
 > Status note (2026-04-26): this document started as a pre-implementation execution backlog. The detailed workstream checklists below are preserved as historical planning notes and are not the authoritative live status for the current repository.
 >
