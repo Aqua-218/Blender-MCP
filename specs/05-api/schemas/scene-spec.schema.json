@@ -1,0 +1,73 @@
+{
+  "$id": "https://blender-mcp.local/schemas/scene-spec.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assets": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "cameras": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "environment": {
+      "default": {},
+      "type": "object"
+    },
+    "lighting": {
+      "default": {},
+      "type": "object"
+    },
+    "name": {
+      "type": "string"
+    },
+    "quality_target": {
+      "enum": [
+        "draft",
+        "standard",
+        "high",
+        "hero"
+      ],
+      "type": "string"
+    },
+    "scene_id": {
+      "type": "string"
+    },
+    "style": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "theme": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "scene_id",
+    "name",
+    "quality_target"
+  ],
+  "title": "SceneSpec",
+  "type": "object"
+}
