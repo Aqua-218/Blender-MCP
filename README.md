@@ -1,125 +1,137 @@
 # Blender MCP
 
-Blender MCP is a Python 3.12 project that implements a safe MCP server, a local authenticated Blender controller bridge, structured metadata persistence, and deterministic tests for end-to-end creative workflows.
+Blender MCP is an Apache-2.0 Python project that exposes safe, structured Blender workflows over the Model Context Protocol (MCP). It pairs an MCP server with a local authenticated Blender controller bridge so desktop clients and agents can create, inspect, revise, render, and export 3D work without arbitrary shell access.
 
-## Current Scope
+## Overview
 
-This repository now covers the foundation workstreams plus the major advanced capability families that were originally staged after the MVP. Implemented areas include:
+Blender MCP is designed for iterative creative workflows where a user reviews output while an MCP client drives Blender through typed, policy-checked tool calls.
 
-- project lifecycle, workspace safety, persistence, and policy enforcement
-- object, geometry, material, lighting, camera, and render workflows
-- asset import/export, export profiles, and export-readiness gates
-- QA inspection, history, snapshots, diff summaries, and comparison renders
-- modifiers, repair helpers, semantic parts, and localized model revisions
-- model generation, scene composition, world generation, and geometry nodes helpers
-- texture and UV workflows plus experimental animation and rigging helpers
-- system diagnostics, runtime info, safe config inspection, and in-memory server metrics
+Highlights:
 
-Current regression status: the full repository test suite passes in this repository.
+- stdio-first MCP server with optional authenticated local HTTP transport
+- persistent Blender controller bridge for stateful modeling sessions
+- deterministic mock runtime for CI and local development without Blender
+- typed models and published JSON schemas for requests, results, and domain artifacts
+- workspace allowlists, policy gates, snapshots, history, and QA reporting
 
-The project supports two runtime modes:
+Implemented tool families include project lifecycle, object and geometry authoring, materials, rendering, import and export, semantic parts, repair helpers, model generation, scene and world composition, geometry nodes, texture and UV operations, QA inspection, and runtime diagnostics.
 
-- Blender-backed runtime when a Blender binary is configured
-- Mock controller runtime for deterministic automated tests when Blender is unavailable
+## Project Status
 
-The mock runtime is a test harness, not a replacement for the real bridge design. The server, policy layer, transport layer, and controller protocol remain the same in both modes.
+Blender MCP is currently alpha software. The repository is ready for local evaluation, client integration work, and community contributions, but public tool contracts and release automation may continue to evolve before a stable `1.0.0` release.
 
-## Quickstart
+## Quick Start
 
-1. Create a Python 3.12 environment.
-2. Install the package and developer dependencies.
-3. Copy .env.example to .env if you want local overrides.
-4. Run schema checks, lint, and tests.
+### Prerequisites
 
-Example:
+- Python 3.12
+- Optional Blender 5.x for real runtime validation
+- A writable workspace directory for projects, renders, exports, logs, and snapshots
+
+### Install From Source
 
 ```bash
-python3 -m pip install -e ".[dev]"
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+cp .env.example .env
 make schema-check
 make lint
 make test
 ```
 
-## Desktop Client Stdio Configuration
+### Start The Server
 
-Any MCP client that launches servers over stdio can start this server directly from the repository virtual environment.
-
-Example configuration:
-
-```json
-{
-	"mcpServers": {
-		"blender-mcp": {
-			"command": "/absolute/path/to/blender-mcp/.venv/bin/python",
-			"args": ["-m", "mcp_server.main", "--transport", "stdio"],
-			"env": {
-				"BLENDER_MCP_WORKSPACE_ROOTS": "/absolute/path/to/blender-mcp/workspace",
-				"BLENDER_MCP_CONTROLLER_MODE": "mock"
-			}
-		}
-	}
-}
+```bash
+blender-mcp-server --transport stdio
 ```
 
-For a Blender-backed runtime, switch `BLENDER_MCP_CONTROLLER_MODE` to `blender` and set `BLENDER_MCP_BLENDER_BINARY` to the Blender executable path.
+### Configure A Desktop Client
 
-Ready-to-edit example files are available in:
+Ready-to-edit examples are available in [examples/README.md](examples/README.md), [examples/claude-desktop.mock.json](examples/claude-desktop.mock.json), and [examples/claude-desktop.blender.json](examples/claude-desktop.blender.json).
 
-- [examples/claude-desktop.mock.json](examples/claude-desktop.mock.json)
-- [examples/claude-desktop.blender.json](examples/claude-desktop.blender.json)
-- [examples/README.md](examples/README.md)
+For a deterministic local setup, use the mock runtime. For a Blender-backed setup, set `BLENDER_MCP_CONTROLLER_MODE=blender` and point `BLENDER_MCP_BLENDER_BINARY` at an installed Blender executable.
 
-## Developer Commands
+## Installation Options
 
-- Run stdio server: `make run-stdio`
-- Run opt-in local HTTP debug server only: `make run-http-unsafe`
-- Run default regression tests: `make test`
-- Run integration tests only: `make test-integration`
-- Run load and soak checks: `make test-load`
-- Run the automated phase-0 MCP acceptance flow: `make test-phase0`
-- Run Blender-backed bridge smoke validation: `make test-blender-smoke`
-- Build wheel and sdist artifacts, verify archive hygiene, then install each artifact into a separate isolated environment and verify mock-mode startup without the repository checkout as cwd: `make package-check`
-- Export generated schemas: `make schema-export`
-- Check schema drift: `make schema-check`
-- Run controller smoke tests: `make controller-smoke`
+### Source Checkout
 
-## Blender-Backed Validation
+This is the recommended setup for contributors and local evaluators:
 
-Use `make test-blender-smoke` to verify that the managed controller can launch a real Blender runtime and report runtime information.
+```bash
+python -m pip install -e ".[dev]"
+```
 
-The target uses `BLENDER_MCP_BLENDER_BINARY` when it is set, then falls back to `blender` on `PATH`, then `/Applications/Blender.app/Contents/MacOS/Blender` on macOS.
+### Built Artifacts
 
-The current repository state has been validated locally against Blender 5.1.1 on macOS. When Blender is available, the full repository test run includes the Blender-backed bridge smoke test in addition to the mock-runtime regression suite.
+You can also build and install local artifacts:
 
-The repository CI workflow also includes a dedicated Blender-backed smoke lane. For the full release checklist and client-facing validation sequence, see [specs/14-operations/runbooks/release-validation.md](specs/14-operations/runbooks/release-validation.md).
+```bash
+python -m build
+python -m pip install dist/blender_mcp-0.1.0-py3-none-any.whl
+```
 
-## Package Validation
+Use `make package-check` to verify that the wheel and sdist install cleanly in isolated environments and include the required release metadata.
 
-Use `make package-check` to build both the sdist and wheel into `dist/`, verify that neither archive contains stale validation artifacts, install each artifact into its own isolated environment, and verify that the server can initialize and start in mock mode without relying on the repository checkout as the working directory.
+The built artifacts also ship the generated public schemas under `generated_schemas/`.
 
-## Environment
+## Usage
 
-The server reads configuration from environment variables prefixed with `BLENDER_MCP_`.
+Blender MCP supports two runtime modes:
 
-Important variables:
+- `mock`: deterministic runtime for tests and local validation
+- `blender`: managed or attached Blender runtime backed by the Blender Python API
 
-- `BLENDER_MCP_REPO_ROOT`: optional override for source-checkout asset resolution and controller bootstrap without depending on the current working directory
+Useful commands:
+
+- `make run-stdio` to launch the stdio server
+- `make run-http-unsafe` to launch an explicit loopback-only debug HTTP server
+- `make test` to run the default regression suite
+- `make test-blender-smoke` to validate a real Blender-backed launch path
+- `make schema-export` to regenerate published schemas
+- `make schema-check` to verify schema drift
+
+## Safety Model
+
+Blender MCP is intentionally conservative:
+
+- no arbitrary shell execution is exposed through tool calls
+- file access is restricted to allowlisted workspace roots
+- destructive actions can trigger pre-mutation snapshots based on configured thresholds
+- local HTTP mode requires explicit opt-in and authentication unless unsafe loopback-only debug mode is chosen
+- controller traffic is authenticated with a shared secret and redacted in logs
+
+## Configuration
+
+The server reads environment variables prefixed with `BLENDER_MCP_`.
+
+Important variables include:
+
 - `BLENDER_MCP_WORKSPACE_ROOTS`: comma-separated allowlisted workspace roots
 - `BLENDER_MCP_CONTROLLER_MODE`: `mock`, `blender`, or `auto`
-- `BLENDER_MCP_BLENDER_BINARY`: path to Blender for real runtime launch
-- `BLENDER_MCP_CONTROLLER_SECRET`: shared secret for authenticated bridge requests; set `BLENDER_MCP_CONTROLLER_ATTACH_TIMEOUT_SECONDS` when you want the server to wait for an already-running controller before spawning its own
-- `BLENDER_MCP_CONTROLLER_ATTACH_TIMEOUT_SECONDS`: optional attach wait window before managed startup; keep this at `0` for normal managed cold starts
-- `BLENDER_MCP_TRANSPORT`: `stdio` by default; `http` is disabled unless `BLENDER_MCP_ENABLE_UNAUTHENTICATED_HTTP=true` is set for loopback-only local inspection
-- `BLENDER_MCP_HTTP_AUTH_TOKEN`: bearer token required for authenticated HTTP mode; leave unset only for explicit loopback-only unsafe debug mode
-- `BLENDER_MCP_HTTP_AUTH_ROLE`: server-assigned role for authenticated HTTP requests
-- `BLENDER_MCP_HTTP_MAX_REQUEST_BYTES`: maximum accepted HTTP request body size
-- `BLENDER_MCP_DEFAULT_ROLE`: server-assigned fallback role for unauthenticated transports; clients must not send their own role
-- `BLENDER_MCP_MAX_SAFE_MODE_POLYGON_BUDGET`: reject oversized generation requests before mutation when safe mode is enabled
+- `BLENDER_MCP_BLENDER_BINARY`: Blender executable path for real runtime launch
+- `BLENDER_MCP_TRANSPORT`: `stdio` or `http`
+- `BLENDER_MCP_HTTP_AUTH_TOKEN`: bearer token for authenticated HTTP mode
+- `BLENDER_MCP_CONTROLLER_SECRET`: shared secret for the controller bridge
+- `BLENDER_MCP_MAX_SAFE_MODE_POLYGON_BUDGET`: request budget guard for safe mode
 
-## Transport Support
+See [.env.example](.env.example) for the full configuration surface.
 
-The recommended client transport remains stdio. Streamable HTTP is now supported in two explicit modes: authenticated HTTP using `BLENDER_MCP_HTTP_AUTH_TOKEN`, or loopback-only unsafe local debug mode using `BLENDER_MCP_ENABLE_UNAUTHENTICATED_HTTP=true`. Unsafe mode remains loopback-only. Hosted deployments should terminate TLS in front of the HTTP listener.
+## Documentation
 
-## Schema Source Of Truth
+- [specs/README.md](specs/README.md): detailed requirements, architecture, security, operations, and testing docs
+- [specs/14-operations/runbooks/release-validation.md](specs/14-operations/runbooks/release-validation.md): release validation checklist
+- [generated_schemas](generated_schemas): code-generated public schemas
 
-The canonical public schemas remain under specs/05-api/schemas. Code-generated schemas are exported into generated_schemas/ and compared against the spec copies during validation.
+## Contributing
+
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), review the [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and check the active priorities in [ROADMAP.md](ROADMAP.md).
+
+## Security
+
+Please do not report vulnerabilities in public issues. Review [SECURITY.md](SECURITY.md) for the supported versions, reporting process, and disclosure expectations.
+
+## License
+
+Blender MCP is licensed under the Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for the full terms and attribution notice.
