@@ -1,0 +1,71 @@
+{
+  "$id": "https://blender-mcp.local/schemas/qa-report.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "blocked_export_formats": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "entity_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "findings": {
+      "default": [],
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "qa_report_id": {
+      "type": "string"
+    },
+    "severity_summary": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "default": {},
+      "type": "object"
+    },
+    "source_operation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "qa_report_id",
+    "project_id",
+    "created_at",
+    "summary"
+  ],
+  "title": "QAReport",
+  "type": "object"
+}
