@@ -1,0 +1,91 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "blender-mcp"
+version = "0.1.0"
+description = "Safe MCP server and Blender controller bridge for structured 3D workflows"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [
+  { name = "GitHub Copilot" }
+]
+dependencies = [
+  "mcp>=1.10.0",
+  "pydantic>=2.11.0",
+  "sqlalchemy>=2.0.40",
+  "alembic>=1.15.0",
+  "typing-extensions>=4.13.0",
+  "orjson>=3.10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2.0",
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.26.0",
+  "ruff>=0.11.0",
+  "mypy>=1.15.0",
+  "pre-commit>=4.2.0",
+]
+
+[project.scripts]
+blender-mcp-server = "mcp_server.main:main"
+blender-mcp-schema-export = "mcp_server.schema_tools:main"
+blender-controller-smoke = "blender_controller.smoke:main"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+  "mcp_server",
+  "blender_controller",
+  "presets",
+]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "lint_output.txt",
+  "typecheck_output.txt",
+  "test_output.txt",
+  "smoke_output.json",
+]
+
+[tool.hatch.build.targets.wheel.force-include]
+"alembic" = "mcp_server/_alembic_runtime/alembic"
+"alembic.ini" = "mcp_server/_alembic_runtime/alembic.ini"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra"
+asyncio_mode = "auto"
+markers = [
+  "integration: marks tests that exercise the controller bridge or subprocess transports",
+  "schema: marks schema drift tests",
+  "soak: marks repeated mock-runtime load and stability checks",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["mcp_server", "blender_controller", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "ASYNC"]
+ignore = ["E501", "ASYNC240"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+packages = ["mcp_server", "blender_controller"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+check_untyped_defs = true
+disable_error_code = ["attr-defined", "no-any-return", "arg-type", "index", "union-attr", "unused-ignore"]
+exclude = ["^tests/"]
+
