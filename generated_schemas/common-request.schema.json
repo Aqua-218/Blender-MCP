@@ -1,5 +1,5 @@
 {
-  "$id": "https://blender-mcp.local/schemas/common-request.schema.json",
+  "$id": "urn:blender-mcp:schema:common-request",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": true,
   "properties": {
