@@ -11,7 +11,7 @@ flowchart LR
 
     User[Human Director User]:::person
     Client[MCP Client\nChatGPT Business / Copilot / VS Code / Cursor / Claude Desktop]:::external
-    MCP[Blender AI MCP Server]:::system
+    MCP[Blender MCP Server]:::system
     BlenderCtrl[Blender Controller Bridge]:::system
     Blender[Blender Runtime]:::external
     Workspace[Workspace Artifacts\n.blend / renders / exports / snapshots / logs]:::storage
@@ -29,4 +29,4 @@ flowchart LR
 
 ## Description
 
-The user never operates Blender directly through this system boundary. The user communicates intent to an MCP client. The client invokes MCP tools on the Blender AI MCP Server. The server validates the request, resolves targets, checks policy, and forwards execution to the Blender controller. Blender performs modeling, rendering, inspection, and export work. Artifacts are written to the workspace, while metadata and history are persisted in SQLite.
+The user never operates Blender directly through this system boundary. The user communicates intent to an MCP client. The client invokes MCP tools on the Blender MCP Server. The server validates the request, resolves targets, checks policy, and forwards execution to the Blender controller. Blender performs modeling, rendering, inspection, and export work. Artifacts are written to the workspace, while metadata and history are persisted in SQLite.
