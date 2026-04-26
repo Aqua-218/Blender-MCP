@@ -8,9 +8,26 @@ version = "0.1.0"
 description = "Safe MCP server and Blender controller bridge for structured 3D workflows"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "Proprietary" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [
-  { name = "GitHub Copilot" }
+  { name = "Aqua", email = "aqua@arivell.com" }
+]
+maintainers = [
+  { name = "Aqua", email = "aqua@arivell.com" }
+]
+keywords = ["blender", "mcp", "model-context-protocol", "3d", "automation"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: AsyncIO",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Artistic Software",
+  "Topic :: Multimedia :: Graphics :: 3D Modeling",
+  "Typing :: Typed",
 ]
 dependencies = [
   "mcp>=1.10.0",
@@ -54,6 +71,7 @@ exclude = [
 [tool.hatch.build.targets.wheel.force-include]
 "alembic" = "mcp_server/_alembic_runtime/alembic"
 "alembic.ini" = "mcp_server/_alembic_runtime/alembic.ini"
+"generated_schemas" = "generated_schemas"
 
 [tool.pytest.ini_options]
 minversion = "8.0"
