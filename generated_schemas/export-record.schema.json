@@ -1,0 +1,54 @@
+{
+  "$id": "https://blender-mcp.local/schemas/export-record.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "created_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "entity_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "export_id": {
+      "type": "string"
+    },
+    "format": {
+      "type": "string"
+    },
+    "metadata": {
+      "default": {},
+      "type": "object"
+    },
+    "output_path": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "warnings": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "export_id",
+    "project_id",
+    "format",
+    "output_path",
+    "created_at"
+  ],
+  "title": "ExportRecord",
+  "type": "object"
+}
