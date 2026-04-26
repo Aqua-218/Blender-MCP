@@ -1,0 +1,113 @@
+name: Bug report
+description: Report a reproducible problem in Blender MCP
+title: "[Bug]: "
+labels:
+  - bug
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report a problem.
+
+        Please include concrete reproduction details. Security issues must not be filed here; follow SECURITY.md instead.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+      placeholder: A short description of the defect.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: controller-mode
+    attributes:
+      label: Controller mode
+      description: Which runtime mode were you using?
+      options:
+        - mock
+        - blender
+        - auto
+        - unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport
+      description: Which client transport was involved?
+      options:
+        - stdio
+        - http
+        - unknown
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Which Blender MCP version, tag, or commit did you test?
+      placeholder: 0.1.0 or a git commit SHA
+    validations:
+      required: true
+
+  - type: input
+    id: blender-version
+    attributes:
+      label: Blender version
+      description: If relevant, which Blender version did you use?
+      placeholder: 5.1.1
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: 3.12.x
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the exact commands, client actions, or payloads.
+      placeholder: |
+        1. Configure the server with ...
+        2. Start the client ...
+        3. Invoke tool ...
+        4. Observe failure ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste relevant output. Remove secrets and local-only identifiers before submitting.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched for existing issues before opening this report.
+          required: true
+        - label: I removed secrets, tokens, and private local paths from logs where possible.
+          required: true
