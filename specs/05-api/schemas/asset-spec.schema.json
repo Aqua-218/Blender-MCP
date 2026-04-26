@@ -1,0 +1,193 @@
+{
+  "$defs": {
+    "PartSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "detail_level": {
+          "default": "base",
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent_part_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "part_id": {
+          "type": "string"
+        },
+        "symmetrical_with": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "part_id",
+        "name",
+        "kind"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://blender-mcp.local/schemas/asset-spec.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "asset_id": {
+      "type": "string"
+    },
+    "category": {
+      "enum": [
+        "prop",
+        "furniture",
+        "building",
+        "vehicle",
+        "mech",
+        "environment",
+        "character",
+        "world",
+        "scene",
+        "other"
+      ],
+      "type": "string"
+    },
+    "constraints": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "forbidden_elements": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "materials": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "metadata": {
+      "default": {},
+      "type": "object"
+    },
+    "name": {
+      "type": "string"
+    },
+    "parts": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/PartSpec"
+      },
+      "type": "array"
+    },
+    "polygon_budget": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "purpose": {
+      "enum": [
+        "game",
+        "render",
+        "concept",
+        "web",
+        "print",
+        "prototype",
+        "other"
+      ],
+      "type": "string"
+    },
+    "seed": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "style": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "target_quality": {
+      "enum": [
+        "draft",
+        "standard",
+        "high",
+        "hero"
+      ],
+      "type": "string"
+    },
+    "theme": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "asset_id",
+    "name",
+    "category",
+    "purpose",
+    "target_quality"
+  ],
+  "title": "AssetSpec",
+  "type": "object"
+}
