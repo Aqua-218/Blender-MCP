@@ -1,0 +1,51 @@
+LIGHTING_PRESETS = {
+    "product_shot": [
+        {
+            "name": "Key",
+            "light_type": "AREA",
+            "location": [3.5, -4.0, 4.0],
+            "rotation": [0.9, 0.0, 0.7],
+            "intensity": 1800.0,
+            "size": 2.5,
+            "color": [1.0, 0.98, 0.95],
+        },
+        {
+            "name": "Fill",
+            "light_type": "AREA",
+            "location": [-3.0, -2.5, 2.5],
+            "rotation": [1.0, 0.0, -0.5],
+            "intensity": 900.0,
+            "size": 3.0,
+            "color": [0.92, 0.96, 1.0],
+        },
+        {
+            "name": "Rim",
+            "light_type": "SPOT",
+            "location": [0.0, 4.0, 3.0],
+            "rotation": [1.7, 0.0, 3.14],
+            "intensity": 650.0,
+            "size": 1.5,
+            "color": [1.0, 1.0, 1.0],
+        },
+    ],
+    "sci_fi": [
+        {
+            "name": "NeonKey",
+            "light_type": "AREA",
+            "location": [4.0, -3.0, 3.0],
+            "rotation": [0.7, 0.0, 0.8],
+            "intensity": 2200.0,
+            "size": 2.0,
+            "color": [0.2, 0.8, 1.0],
+        },
+        {
+            "name": "MagentaFill",
+            "light_type": "AREA",
+            "location": [-4.0, -1.0, 2.0],
+            "rotation": [1.1, 0.0, -0.8],
+            "intensity": 1300.0,
+            "size": 2.5,
+            "color": [1.0, 0.3, 0.8],
+        },
+    ],
+}
