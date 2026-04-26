@@ -1,0 +1,105 @@
+{
+  "$id": "https://blender-mcp.local/schemas/world-spec.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assets": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "biomes": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "landmarks": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "name": {
+      "type": "string"
+    },
+    "regions": {
+      "default": [],
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "roads": {
+      "default": [],
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "seed": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "size_meters": {
+      "items": {
+        "minimum": 0,
+        "type": "number"
+      },
+      "maxItems": 2,
+      "minItems": 2,
+      "type": "array"
+    },
+    "style": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "theme": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "water_systems": {
+      "default": [],
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "world_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "world_id",
+    "name",
+    "size_meters"
+  ],
+  "title": "WorldSpec",
+  "type": "object"
+}
