@@ -221,6 +221,128 @@ class BlenderRuntime(BaseRuntime):
         self.bpy.ops.object.origin_set(type=mode, center="MEDIAN")
         return {"objects": [self._object_payload(obj)], "modified_object_ids": [self._ensure_object_id(obj)]}
 
+    async def cmd_reset_object_transforms(self, payload: dict[str, Any]) -> dict[str, Any]:
+        objects = self._resolve_targets(payload)
+        for obj in objects:
+            if bool(payload.get("reset_location", True)):
+                obj.location = (0.0, 0.0, 0.0)
+            if bool(payload.get("reset_rotation", True)):
+                obj.rotation_euler = (0.0, 0.0, 0.0)
+            if bool(payload.get("reset_scale", True)):
+                obj.scale = (1.0, 1.0, 1.0)
+        return self._transform_result(objects)
+
+    async def cmd_offset_object_transforms(self, payload: dict[str, Any]) -> dict[str, Any]:
+        objects = self._resolve_targets(payload)
+        location_offset = self._vector3(payload.get("location_offset", [0.0, 0.0, 0.0]))
+        rotation_offset = self._vector3(payload.get("rotation_offset", [0.0, 0.0, 0.0]))
+        scale_multiplier = self._vector3(payload.get("scale_multiplier", [1.0, 1.0, 1.0]))
+        for obj in objects:
+            obj.location = [obj.location[index] + location_offset[index] for index in range(3)]
+            obj.rotation_euler = [obj.rotation_euler[index] + rotation_offset[index] for index in range(3)]
+            obj.scale = [obj.scale[index] * scale_multiplier[index] for index in range(3)]
+        return self._transform_result(objects)
+
+    async def cmd_match_object_transform(self, payload: dict[str, Any]) -> dict[str, Any]:
+        source = self._object_by_id(str(payload["source_id"]))
+        objects = self._resolve_targets(payload)
+        for obj in objects:
+            if bool(payload.get("match_location", True)):
+                obj.location = list(source.location)
+            if bool(payload.get("match_rotation", True)):
+                obj.rotation_euler = list(source.rotation_euler)
+            if bool(payload.get("match_scale", True)):
+                obj.scale = list(source.scale)
+        return self._transform_result(objects)
+
+    async def cmd_align_objects(self, payload: dict[str, Any]) -> dict[str, Any]:
+        objects = self._resolve_targets(payload)
+        axis_index = self._axis_index(str(payload.get("axis", "x")))
+        align_to = str(payload.get("align_to", "origin"))
+        points = [self._alignment_point(obj, axis_index, align_to) for obj in objects]
+        target_value = float(payload["target_value"]) if payload.get("target_value") is not None else points[0]
+        for obj, point in zip(objects, points, strict=False):
+            location = list(obj.location)
+            location[axis_index] += target_value - point
+            obj.location = location
+        return self._transform_result(objects)
+
+    async def cmd_distribute_objects(self, payload: dict[str, Any]) -> dict[str, Any]:
+        objects = self._resolve_targets(payload)
+        axis_index = self._axis_index(str(payload.get("axis", "x")))
+        ordered = sorted(objects, key=lambda obj: obj.location[axis_index])
+        if len(ordered) <= 1:
+            return self._transform_result(ordered)
+        spacing = payload.get("spacing")
+        if spacing is None:
+            start_value = float(payload.get("start_value", ordered[0].location[axis_index]))
+            end_value = float(ordered[-1].location[axis_index])
+            step = (end_value - start_value) / float(len(ordered) - 1)
+        else:
+            start_value = float(payload.get("start_value", ordered[0].location[axis_index]))
+            step = float(spacing)
+        for index, obj in enumerate(ordered):
+            location = list(obj.location)
+            location[axis_index] = start_value + (step * index)
+            obj.location = location
+        return self._transform_result(ordered)
+
+    async def cmd_snap_objects_to_grid(self, payload: dict[str, Any]) -> dict[str, Any]:
+        objects = self._resolve_targets(payload)
+        grid_size = float(payload.get("grid_size", 1.0))
+        if grid_size <= 0:
+            raise RuntimeCommandError("validation_error", "grid_size must be greater than zero.")
+        axis_indices = [self._axis_index(str(axis)) for axis in payload.get("axes", ["x", "y", "z"])]
+        for obj in objects:
+            location = list(obj.location)
+            for axis_index in axis_indices:
+                location[axis_index] = round(location[axis_index] / grid_size) * grid_size
+            obj.location = location
+        return self._transform_result(objects)
+
+    async def cmd_place_objects_on_ground(self, payload: dict[str, Any]) -> dict[str, Any]:
+        objects = self._resolve_targets(payload)
+        ground_z = float(payload.get("ground_z", 0.0))
+        for obj in objects:
+            minimum, _maximum = self._object_bounds(obj)
+            location = list(obj.location)
+            location[2] += ground_z - minimum[2]
+            obj.location = location
+        return self._transform_result(objects)
+
+    async def cmd_arrange_objects_in_grid(self, payload: dict[str, Any]) -> dict[str, Any]:
+        objects = self._resolve_targets(payload)
+        columns = max(1, int(payload.get("columns", 4)))
+        spacing = self._vector3(payload.get("spacing", [2.0, 2.0, 0.0]))
+        origin = self._vector3(payload.get("origin", [0.0, 0.0, 0.0]))
+        column_axis = self._axis_index(str(payload.get("column_axis", "x")))
+        row_axis = self._axis_index(str(payload.get("row_axis", "y")))
+        if column_axis == row_axis:
+            raise RuntimeCommandError("validation_error", "column_axis and row_axis must be different.")
+        for index, obj in enumerate(objects):
+            column = index % columns
+            row = index // columns
+            location = list(origin)
+            location[column_axis] += spacing[column_axis] * column
+            location[row_axis] += spacing[row_axis] * row
+            obj.location = location
+        return self._transform_result(objects)
+
+    async def cmd_mirror_object_transforms(self, payload: dict[str, Any]) -> dict[str, Any]:
+        objects = self._resolve_targets(payload)
+        axis_index = self._axis_index(str(payload.get("axis", "x")))
+        pivot = float(payload.get("pivot", 0.0))
+        flip_scale = bool(payload.get("flip_scale", False))
+        for obj in objects:
+            location = list(obj.location)
+            location[axis_index] = (2.0 * pivot) - location[axis_index]
+            obj.location = location
+            if flip_scale:
+                scale = list(obj.scale)
+                scale[axis_index] *= -1.0
+                obj.scale = scale
+        return self._transform_result(objects)
+
     async def cmd_set_object_visibility(self, payload: dict[str, Any]) -> dict[str, Any]:
         objects = self._resolve_targets(payload)
         for obj in objects:
@@ -236,6 +358,115 @@ class BlenderRuntime(BaseRuntime):
                 existing.objects.unlink(obj)
             collection.objects.link(obj)
         return {"objects": [self._object_payload(obj) for obj in objects]}
+
+    async def cmd_list_collections(self, _payload: dict[str, Any]) -> dict[str, Any]:
+        return {"collections": self._collection_payloads()}
+
+    async def cmd_create_collection(self, payload: dict[str, Any]) -> dict[str, Any]:
+        collection_name = str(payload["collection_name"])
+        parent_name = str(payload.get("parent_collection_name") or self._root_collection().name)
+        if self._collection_exists(collection_name):
+            raise RuntimeCommandError("validation_error", f"Collection '{collection_name}' already exists.")
+        parent = self._collection_by_name(parent_name)
+        collection = self.bpy.data.collections.new(collection_name)
+        parent.children.link(collection)
+        return {"collection": self._collection_payload(collection)}
+
+    async def cmd_rename_collection(self, payload: dict[str, Any]) -> dict[str, Any]:
+        collection_name = str(payload["collection_name"])
+        new_name = str(payload["new_collection_name"])
+        collection = self._collection_by_name(collection_name)
+        if collection == self._root_collection():
+            raise RuntimeCommandError("validation_error", "Scene Collection cannot be renamed.")
+        if self._collection_exists(new_name):
+            raise RuntimeCommandError("validation_error", f"Collection '{new_name}' already exists.")
+        object_ids = [self._ensure_object_id(obj) for obj in collection.objects]
+        collection.name = new_name
+        objects = [self._object_payload(obj) for obj in collection.objects]
+        return {"collection": self._collection_payload(collection), "modified_object_ids": object_ids, "objects": objects}
+
+    async def cmd_delete_collection(self, payload: dict[str, Any]) -> dict[str, Any]:
+        collection_name = str(payload["collection_name"])
+        collection = self._collection_by_name(collection_name)
+        root = self._root_collection()
+        if collection == root:
+            raise RuntimeCommandError("validation_error", "Scene Collection cannot be deleted.")
+        object_ids = [self._ensure_object_id(obj) for obj in collection.objects]
+        child_collections = list(collection.children)
+        force = bool(payload.get("force", False))
+        if not force and (object_ids or child_collections):
+            raise RuntimeCommandError(
+                "validation_error",
+                f"Collection '{collection_name}' is not empty; pass force=true to remove collection membership without deleting objects.",
+            )
+        parent = self._collection_parent(collection) or root
+        if parent == collection:
+            parent = root
+        rehomed_child_names: list[str] = []
+        for child in child_collections:
+            collection.children.unlink(child)
+            if parent.children.get(child.name) is None:
+                parent.children.link(child)
+            rehomed_child_names.append(child.name)
+        objects = []
+        for obj in list(collection.objects):
+            collection.objects.unlink(obj)
+            if not obj.users_collection:
+                root.objects.link(obj)
+            objects.append(self._object_payload(obj))
+        for parent_candidate in self._all_collection_parents():
+            if parent_candidate.children.get(collection.name) is not None:
+                parent_candidate.children.unlink(collection)
+        self.bpy.data.collections.remove(collection)
+        return {
+            "modified_object_ids": object_ids,
+            "unlinked_object_ids": object_ids,
+            "rehomed_child_collection_names": rehomed_child_names,
+            "relinked_collection_name": parent.name,
+            "objects": objects,
+        }
+
+    async def cmd_link_objects_to_collection(self, payload: dict[str, Any]) -> dict[str, Any]:
+        collection = self._collection_by_name(str(payload["collection_name"]))
+        objects = self._resolve_targets(payload)
+        for obj in objects:
+            if collection.objects.get(obj.name) is None:
+                collection.objects.link(obj)
+        return {
+            "collection": self._collection_payload(collection),
+            "modified_object_ids": [self._ensure_object_id(obj) for obj in objects],
+            "objects": [self._object_payload(obj) for obj in objects],
+        }
+
+    async def cmd_unlink_objects_from_collection(self, payload: dict[str, Any]) -> dict[str, Any]:
+        collection = self._collection_by_name(str(payload["collection_name"]))
+        root = self._root_collection()
+        objects = self._resolve_targets(payload)
+        missing = [self._ensure_object_id(obj) for obj in objects if collection.objects.get(obj.name) is None]
+        if missing:
+            raise RuntimeCommandError(
+                "target_not_found",
+                f"Object(s) are not linked to collection '{collection.name}': {', '.join(missing)}",
+            )
+        for obj in objects:
+            collection.objects.unlink(obj)
+            if not obj.users_collection:
+                root.objects.link(obj)
+        return {
+            "collection": self._collection_payload(collection),
+            "modified_object_ids": [self._ensure_object_id(obj) for obj in objects],
+            "relinked_collection_name": root.name,
+            "objects": [self._object_payload(obj) for obj in objects],
+        }
+
+    async def cmd_set_collection_visibility(self, payload: dict[str, Any]) -> dict[str, Any]:
+        collection = self._collection_by_name(str(payload["collection_name"]))
+        visible = bool(payload["visible"])
+        if bool(payload.get("set_viewport", True)) and hasattr(collection, "hide_viewport"):
+            collection.hide_viewport = not visible
+        if bool(payload.get("set_render", True)) and hasattr(collection, "hide_render"):
+            collection.hide_render = not visible
+        return {"collection": self._collection_payload(collection)}
 
     async def cmd_tag_object(self, payload: dict[str, Any]) -> dict[str, Any]:
         objects = self._resolve_targets(payload)
@@ -409,6 +640,51 @@ class BlenderRuntime(BaseRuntime):
         material = self._material_by_id(payload["material_id"])
         self._set_material_property(material, payload["property_name"], payload["value"])
         return {"material": self._material_payload(material)}
+
+    async def cmd_add_material_node(self, payload: dict[str, Any]) -> dict[str, Any]:
+        material = self._material_by_id(payload["material_id"])
+        node_tree = self._ensure_material_node_tree(material)
+        try:
+            node = node_tree.nodes.new(type=str(payload["node_type"]))
+        except Exception as exc:  # pragma: no cover - depends on Blender node registry
+            raise RuntimeCommandError("validation_error", f"Unsupported material node_type: {payload['node_type']}") from exc
+        node.name = str(payload.get("node_name") or node.name)
+        node.label = str(payload.get("node_name") or node.label or node.name)
+        location = payload.get("location", [0.0, 0.0])
+        node.location = (float(location[0]), float(location[1]))
+        self._ensure_material_node_id(node)
+        for param_name, value in dict(payload.get("params") or {}).items():
+            self._set_material_node_param(node, str(param_name), value)
+        return self._material_node_result(material, node=node)
+
+    async def cmd_set_material_node_param(self, payload: dict[str, Any]) -> dict[str, Any]:
+        material = self._material_by_id(payload["material_id"])
+        node = self._material_node_by_id(material, payload["node_id"])
+        self._set_material_node_param(node, str(payload["param_name"]), payload["value"])
+        return self._material_node_result(material, node=node)
+
+    async def cmd_connect_material_nodes(self, payload: dict[str, Any]) -> dict[str, Any]:
+        material = self._material_by_id(payload["material_id"])
+        node_tree = self._ensure_material_node_tree(material)
+        from_node = self._material_node_by_id(material, payload["from_node_id"])
+        to_node = self._material_node_by_id(material, payload["to_node_id"])
+        output_socket = self._node_socket(from_node.outputs, str(payload["from_socket"]))
+        input_socket = self._node_socket(to_node.inputs, str(payload["to_socket"]))
+        if output_socket is None or input_socket is None:
+            raise RuntimeCommandError("validation_error", "Requested material node sockets were not found.")
+        blender_link = node_tree.links.new(output_socket, input_socket)
+        link = {
+            "link_id": f"mlink_{list(node_tree.links).index(blender_link) + 1}",
+            "from_node_id": self._ensure_material_node_id(from_node),
+            "from_socket": str(payload["from_socket"]),
+            "to_node_id": self._ensure_material_node_id(to_node),
+            "to_socket": str(payload["to_socket"]),
+        }
+        return self._material_node_result(material, link=link)
+
+    async def cmd_list_material_nodes(self, payload: dict[str, Any]) -> dict[str, Any]:
+        material = self._material_by_id(payload["material_id"])
+        return self._material_node_result(material)
 
     async def cmd_create_pbr_material(self, payload: dict[str, Any]) -> dict[str, Any]:
         material_result = await self.cmd_create_material({"name": payload["name"]})
@@ -699,6 +975,38 @@ class BlenderRuntime(BaseRuntime):
             raise RuntimeCommandError("target_not_found", "No targets were resolved.")
         return [self._object_by_id(target_id) for target_id in dict.fromkeys(target_ids)]
 
+    def _transform_result(self, objects) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+        return {
+            "modified_object_ids": [self._ensure_object_id(obj) for obj in objects],
+            "objects": [self._object_payload(obj) for obj in objects],
+        }
+
+    @staticmethod
+    def _vector3(value: Any) -> list[float]:
+        items = list(value)
+        if len(items) != 3:
+            raise RuntimeCommandError("validation_error", "Expected exactly 3 coordinates.")
+        return [float(component) for component in items]
+
+    @staticmethod
+    def _axis_index(axis: str) -> int:
+        axis_map = {"x": 0, "y": 1, "z": 2}
+        if axis not in axis_map:
+            raise RuntimeCommandError("validation_error", f"Unsupported axis: {axis}")
+        return axis_map[axis]
+
+    def _alignment_point(self, obj, axis_index: int, align_to: str) -> float:  # type: ignore[no-untyped-def]
+        if align_to == "origin":
+            return float(obj.location[axis_index])
+        minimum, maximum = self._object_bounds(obj)
+        if align_to == "min":
+            return float(minimum[axis_index])
+        if align_to == "max":
+            return float(maximum[axis_index])
+        if align_to == "center":
+            return float((minimum[axis_index] + maximum[axis_index]) / 2.0)
+        raise RuntimeCommandError("validation_error", f"Unsupported align_to mode: {align_to}")
+
     def _object_matches(self, obj, payload: dict[str, Any]) -> bool:  # type: ignore[no-untyped-def]
         if payload.get("names"):
             names = {name.lower() for name in payload["names"]}
@@ -831,6 +1139,121 @@ class BlenderRuntime(BaseRuntime):
                 return material
         raise RuntimeCommandError("target_not_found", f"Unknown material_id: {material_id}")
 
+    def _ensure_material_node_tree(self, material):  # type: ignore[no-untyped-def]
+        material.use_nodes = True
+        if material.node_tree is None:
+            raise RuntimeCommandError("blender_execution_error", "Material node tree is unavailable.")
+        return material.node_tree
+
+    @staticmethod
+    def _node_custom_get(node, key: str, default: Any = None) -> Any:  # type: ignore[no-untyped-def]
+        getter = getattr(node, "get", None)
+        if callable(getter):
+            return getter(key, default)
+        try:
+            return node[key]
+        except Exception:
+            return default
+
+    @staticmethod
+    def _node_custom_set(node, key: str, value: Any) -> None:  # type: ignore[no-untyped-def]
+        node[key] = value
+
+    def _ensure_material_node_id(self, node) -> str:  # type: ignore[no-untyped-def]
+        node_id = self._node_custom_get(node, "mcp_node_id")
+        if node_id:
+            return str(node_id)
+        node_id = new_id("mnode")
+        self._node_custom_set(node, "mcp_node_id", node_id)
+        return node_id
+
+    def _material_node_by_id(self, material, node_id: str):  # type: ignore[no-untyped-def]
+        node_tree = self._ensure_material_node_tree(material)
+        for node in node_tree.nodes:
+            if self._ensure_material_node_id(node) == node_id or node.name == node_id:
+                return node
+        raise RuntimeCommandError("target_not_found", f"Unknown material node_id: {node_id}")
+
+    def _set_material_node_param(self, node, param_name: str, value: Any) -> None:  # type: ignore[no-untyped-def]
+        params = self._material_node_params(node)
+        params[param_name] = json.loads(json.dumps(value))
+        self._node_custom_set(node, "mcp_node_params_json", json.dumps(params))
+        socket = self._node_socket(node.inputs, param_name)
+        if socket is None or not hasattr(socket, "default_value"):
+            return
+        try:
+            socket.default_value = value
+        except TypeError:
+            socket.default_value = tuple(value) if isinstance(value, list) else value
+
+    def _material_node_params(self, node) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+        raw = self._node_custom_get(node, "mcp_node_params_json")
+        if not raw:
+            return {}
+        try:
+            params = json.loads(str(raw))
+        except json.JSONDecodeError:
+            return {}
+        return params if isinstance(params, dict) else {}
+
+    @staticmethod
+    def _node_socket(sockets, socket_name: str):  # type: ignore[no-untyped-def]
+        getter = getattr(sockets, "get", None)
+        if callable(getter):
+            direct = getter(socket_name)
+            if direct is not None:
+                return direct
+        lowered = socket_name.lower()
+        for socket in sockets:
+            if str(getattr(socket, "name", "")).lower() == lowered:
+                return socket
+        return None
+
+    def _material_node_payload(self, node) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+        location = getattr(node, "location", None)
+        return {
+            "node_id": self._ensure_material_node_id(node),
+            "node_type": str(getattr(node, "bl_idname", type(node).__name__)),
+            "node_name": str(getattr(node, "name", "MaterialNode")),
+            "label": str(getattr(node, "label", "")),
+            "location": [float(getattr(location, "x", 0.0)), float(getattr(location, "y", 0.0))],
+            "params": self._material_node_params(node),
+        }
+
+    def _material_links_payload(self, material) -> list[dict[str, Any]]:  # type: ignore[no-untyped-def]
+        node_tree = self._ensure_material_node_tree(material)
+        links: list[dict[str, Any]] = []
+        for index, link in enumerate(node_tree.links, start=1):
+            links.append(
+                {
+                    "link_id": f"mlink_{index}",
+                    "from_node_id": self._ensure_material_node_id(link.from_node),
+                    "from_socket": str(getattr(link.from_socket, "name", "")),
+                    "to_node_id": self._ensure_material_node_id(link.to_node),
+                    "to_socket": str(getattr(link.to_socket, "name", "")),
+                }
+            )
+        return links
+
+    def _material_node_result(
+        self,
+        material,
+        *,
+        node=None,
+        link: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+        node_tree = self._ensure_material_node_tree(material)
+        result = {
+            "material": self._material_payload(material),
+            "nodes": [self._material_node_payload(existing_node) for existing_node in node_tree.nodes],
+            "links": self._material_links_payload(material),
+        }
+        if node is not None:
+            result["node"] = self._material_node_payload(node)
+        if link is not None:
+            result["link"] = link
+        return result
+
     def _extract_material_properties(self, material) -> dict[str, Any]:  # type: ignore[no-untyped-def]
         tracked = self._tracked_material_properties(material)
         if not tracked:
@@ -940,12 +1363,74 @@ class BlenderRuntime(BaseRuntime):
         if payload.get("field_of_view") is not None:
             camera_object.data.angle = float(payload["field_of_view"])
 
-    def _ensure_collection(self, name: str):  # type: ignore[no-untyped-def]
+    def _root_collection(self):  # type: ignore[no-untyped-def]
+        return self.bpy.context.scene.collection
+
+    def _collection_exists(self, name: str) -> bool:
+        root = self._root_collection()
+        return name == root.name or name == "Scene Collection" or self.bpy.data.collections.get(name) is not None
+
+    def _collection_by_name(self, name: str):  # type: ignore[no-untyped-def]
+        root = self._root_collection()
+        if name in {root.name, "Scene Collection"}:
+            return root
         collection = self.bpy.data.collections.get(name)
         if collection is None:
-            collection = self.bpy.data.collections.new(name)
-            self.bpy.context.scene.collection.children.link(collection)
+            raise RuntimeCommandError("target_not_found", f"Unknown collection_name: {name}")
         return collection
+
+    def _ensure_collection(self, name: str, parent_name: str | None = None):  # type: ignore[no-untyped-def]
+        try:
+            return self._collection_by_name(name)
+        except RuntimeCommandError:
+            parent = self._collection_by_name(parent_name or "Scene Collection")
+            collection = self.bpy.data.collections.new(name)
+            parent.children.link(collection)
+            return collection
+
+    def _all_collection_parents(self):  # type: ignore[no-untyped-def]
+        return [self._root_collection(), *list(self.bpy.data.collections)]
+
+    def _collection_parent(self, collection):  # type: ignore[no-untyped-def]
+        for parent in self._all_collection_parents():
+            if parent != collection and parent.children.get(collection.name) is not None:
+                return parent
+        return None
+
+    def _collection_payloads(self) -> list[dict[str, Any]]:
+        root = self._root_collection()
+        payloads: list[dict[str, Any]] = []
+        seen: set[int] = set()
+
+        def visit(collection) -> None:  # type: ignore[no-untyped-def]
+            pointer = int(collection.as_pointer())
+            if pointer in seen:
+                return
+            seen.add(pointer)
+            payloads.append(self._collection_payload(collection))
+            for child in collection.children:
+                visit(child)
+
+        visit(root)
+        for collection in self.bpy.data.collections:
+            visit(collection)
+        return payloads
+
+    def _collection_payload(self, collection) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+        parent = self._collection_parent(collection)
+        object_ids = [self._ensure_object_id(obj) for obj in collection.objects]
+        hide_viewport = bool(getattr(collection, "hide_viewport", False))
+        hide_render = bool(getattr(collection, "hide_render", False))
+        return {
+            "name": collection.name,
+            "parent_name": parent.name if parent is not None else None,
+            "children": [child.name for child in collection.children],
+            "object_ids": object_ids,
+            "object_count": len(object_ids),
+            "visible": not hide_viewport and not hide_render,
+            "hide_viewport": hide_viewport,
+            "hide_render": hide_render,
+        }
 
     async def cmd_add_modifier(self, payload: dict[str, Any]) -> dict[str, Any]:
         obj = self._require_object(payload["target_id"])
