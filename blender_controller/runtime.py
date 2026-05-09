@@ -106,6 +106,10 @@ class RuntimeProjectState:
     lights: dict[str, RuntimeLight] = field(default_factory=dict)
     cameras: dict[str, RuntimeCamera] = field(default_factory=dict)
     collections: dict[str, list[str]] = field(default_factory=lambda: {"Scene Collection": []})
+    collection_parents: dict[str, str | None] = field(default_factory=lambda: {"Scene Collection": None})
+    collection_visibility: dict[str, dict[str, bool]] = field(
+        default_factory=lambda: {"Scene Collection": {"visible": True, "hide_viewport": False, "hide_render": False}}
+    )
     render_settings: RenderSettingsState = field(default_factory=RenderSettingsState)
 
 
