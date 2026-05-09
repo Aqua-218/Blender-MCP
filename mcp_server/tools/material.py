@@ -5,8 +5,10 @@ from typing import Any
 from presets.materials import MATERIAL_PRESETS
 from pydantic import Field
 
+from mcp_server.bridge import ControllerBridgeError
 from mcp_server.models.common import (
     CommonToolRequest,
+    CommonToolResult,
     failed_result,
     partial_success_result,
     success_result,
@@ -50,6 +52,63 @@ class CreatePBRMaterialRequest(CommonToolRequest):
     alpha: float | None = None
     emission_color: list[float] | None = None
     emission_strength: float | None = None
+
+
+class AddMaterialNodeRequest(CommonToolRequest):
+    project_id: str
+    material_id: str
+    node_type: str
+    node_name: str | None = None
+    location: tuple[float, float] = (0.0, 0.0)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class SetMaterialNodeParamRequest(CommonToolRequest):
+    project_id: str
+    material_id: str
+    node_id: str
+    param_name: str
+    value: Any
+
+
+class ConnectMaterialNodesRequest(CommonToolRequest):
+    project_id: str
+    material_id: str
+    from_node_id: str
+    from_socket: str
+    to_node_id: str
+    to_socket: str
+
+
+class ListMaterialNodesRequest(CommonToolRequest):
+    project_id: str
+    material_id: str
+
+
+def _material_failed_result(request_id: str, tool_name: str, code: str, message: str) -> CommonToolResult:
+    return failed_result(
+        request_id=request_id,
+        tool_name=tool_name,
+        summary=message,
+        errors=[f"{code}: {message}"],
+    )
+
+
+async def _invoke_material_command(
+    context,  # type: ignore[no-untyped-def]
+    command: str,
+    payload: dict[str, Any],
+    *,
+    request_id: str,
+    tool_name: str,
+    read_only: bool = False,
+) -> dict[str, Any] | CommonToolResult:
+    try:
+        return await context.bridge.invoke(command, payload, read_only=read_only)
+    except ControllerBridgeError as exc:
+        if exc.code in {"validation_error", "target_not_found", "unsupported_feature"}:
+            return _material_failed_result(request_id, tool_name, exc.code, exc.message)
+        raise
 
 
 async def create_material(context, request: CreateMaterialRequest):  # type: ignore[no-untyped-def]
@@ -178,12 +237,135 @@ async def create_pbr_material(context, request: CreatePBRMaterialRequest):  # ty
     )
 
 
+async def add_material_node(context, request: AddMaterialNodeRequest):  # type: ignore[no-untyped-def]
+    project = require_project(context, request.project_id)
+    result = await _invoke_material_command(
+        context,
+        "add_material_node",
+        request.model_dump(),
+        request_id=request.request_id,
+        tool_name="add_material_node",
+    )
+    if isinstance(result, CommonToolResult):
+        return result
+    context.projects.mark_dirty(project.project_id, project.active_scene_name)
+    sync_named_entity(
+        context,
+        project.project_id,
+        result["material"]["material_id"],
+        "material",
+        result["material"]["name"],
+        result["material"],
+    )
+    return success_result(
+        request_id=request.request_id,
+        tool_name="add_material_node",
+        summary=f"Added material node '{result['node']['node_name']}'.",
+        project_id=project.project_id,
+        material=result["material"],
+        node=result["node"],
+        nodes=result.get("nodes", []),
+        links=result.get("links", []),
+    )
+
+
+async def set_material_node_param(context, request: SetMaterialNodeParamRequest):  # type: ignore[no-untyped-def]
+    project = require_project(context, request.project_id)
+    result = await _invoke_material_command(
+        context,
+        "set_material_node_param",
+        request.model_dump(),
+        request_id=request.request_id,
+        tool_name="set_material_node_param",
+    )
+    if isinstance(result, CommonToolResult):
+        return result
+    context.projects.mark_dirty(project.project_id, project.active_scene_name)
+    sync_named_entity(
+        context,
+        project.project_id,
+        result["material"]["material_id"],
+        "material",
+        result["material"]["name"],
+        result["material"],
+    )
+    return success_result(
+        request_id=request.request_id,
+        tool_name="set_material_node_param",
+        summary=f"Updated material node parameter '{request.param_name}'.",
+        project_id=project.project_id,
+        material=result["material"],
+        node=result["node"],
+        nodes=result.get("nodes", []),
+        links=result.get("links", []),
+    )
+
+
+async def connect_material_nodes(context, request: ConnectMaterialNodesRequest):  # type: ignore[no-untyped-def]
+    project = require_project(context, request.project_id)
+    result = await _invoke_material_command(
+        context,
+        "connect_material_nodes",
+        request.model_dump(),
+        request_id=request.request_id,
+        tool_name="connect_material_nodes",
+    )
+    if isinstance(result, CommonToolResult):
+        return result
+    context.projects.mark_dirty(project.project_id, project.active_scene_name)
+    sync_named_entity(
+        context,
+        project.project_id,
+        result["material"]["material_id"],
+        "material",
+        result["material"]["name"],
+        result["material"],
+    )
+    return success_result(
+        request_id=request.request_id,
+        tool_name="connect_material_nodes",
+        summary="Connected material nodes.",
+        project_id=project.project_id,
+        material=result["material"],
+        link=result["link"],
+        nodes=result.get("nodes", []),
+        links=result.get("links", []),
+    )
+
+
+async def list_material_nodes(context, request: ListMaterialNodesRequest):  # type: ignore[no-untyped-def]
+    require_project(context, request.project_id)
+    result = await _invoke_material_command(
+        context,
+        "list_material_nodes",
+        request.model_dump(),
+        request_id=request.request_id,
+        tool_name="list_material_nodes",
+        read_only=True,
+    )
+    if isinstance(result, CommonToolResult):
+        return result
+    return success_result(
+        request_id=request.request_id,
+        tool_name="list_material_nodes",
+        summary=f"Listed {len(result.get('nodes', []))} material nodes.",
+        project_id=request.project_id,
+        material=result["material"],
+        nodes=result.get("nodes", []),
+        links=result.get("links", []),
+    )
+
+
 def register_tools(app) -> None:  # type: ignore[no-untyped-def]
     for name, description, input_model, handler, read_only in (
         ("create_material", "Create a new material with optional preset defaults.", CreateMaterialRequest, create_material, False),
         ("apply_material", "Apply a material to one or more objects.", ApplyMaterialRequest, apply_material, False),
         ("set_material_property", "Update a material property.", SetMaterialPropertyRequest, set_material_property, False),
         ("create_pbr_material", "Create a PBR material with explicit parameters.", CreatePBRMaterialRequest, create_pbr_material, False),
+        ("add_material_node", "Add a node to a material node graph.", AddMaterialNodeRequest, add_material_node, False),
+        ("set_material_node_param", "Set a tracked parameter on a material node.", SetMaterialNodeParamRequest, set_material_node_param, False),
+        ("connect_material_nodes", "Connect two material node sockets.", ConnectMaterialNodesRequest, connect_material_nodes, False),
+        ("list_material_nodes", "List material node graph nodes and links.", ListMaterialNodesRequest, list_material_nodes, True),
     ):
         app.register_tool(
             app.tool_definition(
