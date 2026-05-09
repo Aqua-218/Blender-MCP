@@ -14,7 +14,7 @@ Highlights:
 - typed models and published JSON schemas for requests, results, and domain artifacts
 - workspace allowlists, policy gates, snapshots, history, and QA reporting
 
-Implemented tool families include project lifecycle, object and geometry authoring, materials, rendering, import and export, semantic parts, repair helpers, model generation, scene and world composition, geometry nodes, texture and UV operations, QA inspection, and runtime diagnostics.
+Implemented tool families include project lifecycle, object and geometry authoring, transforms and alignment, selection sets, materials and material-node helpers, rendering, import and export, semantic parts, repair helpers, model generation, scene and world composition, production pipeline planning, execution-oriented AAA orchestration, 520 generated AAA workflow recipes, geometry nodes, texture and UV operations, QA inspection, and runtime diagnostics.
 
 ## Project Status
 
