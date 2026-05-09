@@ -118,6 +118,43 @@ class InspectWorldRequest(CommonToolRequest):
     world_id: str
 
 
+class CreateWorldPresetRequest(CommonToolRequest):
+    project_id: str
+    name: str
+    preset_name: Literal["forest_valley", "urban_block", "coastal_outpost"] = "forest_valley"
+    size: float = Field(default=36.0, gt=0.0)
+    seed: int = 0
+
+
+class GenerateMountainRangeRequest(CommonToolRequest):
+    project_id: str
+    world_id: str
+    name: str = "Mountain Range"
+    count: int = Field(default=5, ge=1, le=32)
+    start: list[float] = Field(default_factory=lambda: [-12.0, 10.0, 0.0])
+    end: list[float] = Field(default_factory=lambda: [12.0, 10.0, 0.0])
+    height: float = Field(default=5.0, gt=0.0)
+    base_radius: float = Field(default=2.0, gt=0.0)
+    collection_name: str = "World Mountains"
+
+
+class CreateNavigationMarkersRequest(CommonToolRequest):
+    project_id: str
+    world_id: str
+    marker_count: int = Field(default=4, ge=1, le=64)
+    extent: float = Field(default=16.0, gt=0.0)
+    marker_type: Literal["spawn", "poi", "quest", "waypoint"] = "poi"
+    collection_name: str = "World Navigation"
+
+
+class ValidateWorldCompositionRequest(CommonToolRequest):
+    project_id: str
+    world_id: str
+    require_terrain: bool = True
+    require_biomes: bool = True
+    require_navigation: bool = False
+
+
 def _load_world(context, request_id: str, world_id: str, tool_name: str) -> dict[str, Any] | CommonToolResult:  # type: ignore[no-untyped-def]
     world = load_entity_spec(context, world_id, expected_type="world")
     if world is None:
@@ -186,6 +223,8 @@ async def create_world(context, request: CreateWorldRequest):  # type: ignore[no
         "building_ids": [],
         "vegetation_ids": [],
         "region_ids": [],
+        "mountain_range_ids": [],
+        "navigation_marker_ids": [],
     }
     _save_world(context, project.project_id, world)
 
@@ -913,6 +952,161 @@ async def detail_region(context, request: DetailRegionRequest):  # type: ignore[
     )
 
 
+async def create_world_preset(context, request: CreateWorldPresetRequest):  # type: ignore[no-untyped-def]
+    project = require_project(context, request.project_id)
+    world = await create_world(
+        context,
+        CreateWorldRequest(
+            request_id=f"{request.request_id}-world",
+            project_id=project.project_id,
+            name=request.name,
+            theme=request.preset_name,
+            create_base_terrain=True,
+            terrain_size=request.size,
+            terrain_height_variation=3.0 if request.preset_name == "forest_valley" else 1.5,
+        ),
+    )
+    if world.status != "success":
+        return retag_result(world, "create_world_preset")
+    world_id = str(world.model_dump()["world_id"])
+    created_object_ids = list(world.created_object_ids)
+    results: dict[str, Any] = {"world": world.model_dump()}
+
+    biome_names = {
+        "forest_valley": ["forest", "rock", "water"],
+        "urban_block": ["urban", "asphalt", "park"],
+        "coastal_outpost": ["coast", "sand", "grass"],
+    }[request.preset_name]
+    biomes = await generate_biomes(context, GenerateBiomesRequest(request_id=f"{request.request_id}-biomes", project_id=project.project_id, world_id=world_id, biome_types=biome_names))
+    if biomes.status != "success":
+        return retag_result(biomes, "create_world_preset")
+    results["biomes"] = biomes.model_dump()
+
+    roads = await generate_roads(context, GenerateRoadsRequest(request_id=f"{request.request_id}-roads", project_id=project.project_id, world_id=world_id, road_count=3 if request.preset_name == "urban_block" else 2, extent=request.size * 0.75))
+    if roads.status != "success":
+        return retag_result(roads, "create_world_preset")
+    created_object_ids.extend(roads.created_object_ids)
+    results["roads"] = roads.model_dump()
+
+    if request.preset_name in {"forest_valley", "coastal_outpost"}:
+        water = await generate_water_system(context, GenerateWaterSystemRequest(request_id=f"{request.request_id}-water", project_id=project.project_id, world_id=world_id, water_type="lake" if request.preset_name == "forest_valley" else "coast", width=request.size * 0.18, length=request.size * 0.5))
+        if water.status != "success":
+            return retag_result(water, "create_world_preset")
+        created_object_ids.extend(water.created_object_ids)
+        results["water"] = water.model_dump()
+
+    buildings = await place_buildings(context, PlaceBuildingsRequest(request_id=f"{request.request_id}-buildings", project_id=project.project_id, world_id=world_id, count=4 if request.preset_name == "urban_block" else 2, spacing=request.size * 0.18, style=request.preset_name))
+    if buildings.status != "success":
+        return retag_result(buildings, "create_world_preset")
+    created_object_ids.extend(buildings.created_object_ids)
+    results["buildings"] = buildings.model_dump()
+
+    vegetation = await scatter_vegetation(context, ScatterVegetationRequest(request_id=f"{request.request_id}-vegetation", project_id=project.project_id, world_id=world_id, count=8 if request.preset_name != "urban_block" else 4, area_min=[-request.size * 0.35, -request.size * 0.35, 0.0], area_max=[request.size * 0.35, request.size * 0.35, 0.0], seed=request.seed))
+    if vegetation.status != "success":
+        return retag_result(vegetation, "create_world_preset")
+    created_object_ids.extend(vegetation.created_object_ids)
+    results["vegetation"] = vegetation.model_dump()
+
+    navigation = await create_navigation_markers(context, CreateNavigationMarkersRequest(request_id=f"{request.request_id}-navigation", project_id=project.project_id, world_id=world_id, marker_count=4, extent=request.size * 0.35))
+    if navigation.status != "success":
+        return retag_result(navigation, "create_world_preset")
+    created_object_ids.extend(navigation.created_object_ids)
+    results["navigation"] = navigation.model_dump()
+
+    return success_result(request_id=request.request_id, tool_name="create_world_preset", summary=f"Created {request.preset_name} world preset '{request.name}'.", project_id=project.project_id, world_id=world_id, created_object_ids=created_object_ids, preset_results=results)
+
+
+async def generate_mountain_range(context, request: GenerateMountainRangeRequest):  # type: ignore[no-untyped-def]
+    project = require_project(context, request.project_id)
+    world = _load_world(context, request.request_id, request.world_id, "generate_mountain_range")
+    if isinstance(world, CommonToolResult):
+        return world
+    material_result = await create_pbr_material(context, CreatePBRMaterialRequest(request_id=request.request_id, project_id=project.project_id, name=f"{request.name}_Rock", base_color=[0.38, 0.36, 0.33, 1.0], roughness=0.94, metallic=0.0))
+    if material_result.status != "success":
+        return retag_result(material_result, "generate_mountain_range")
+    material_id = str(material_result.model_dump()["material"]["material_id"])
+    created_object_ids: list[str] = []
+    objects: list[dict[str, Any]] = []
+    peaks: list[dict[str, Any]] = []
+    for index in range(request.count):
+        fraction = index / max(request.count - 1, 1)
+        location = [request.start[axis] + ((request.end[axis] - request.start[axis]) * fraction) for axis in range(3)]
+        peak_height = request.height * (0.75 + (0.25 * ((index % 3) + 1)))
+        created = await create_primitive(context, CreatePrimitiveRequest(request_id=f"{request.request_id}-peak-{index}", project_id=project.project_id, primitive_type="cone", name=f"{request.name}_{index + 1:02d}", location=location, scale=[request.base_radius, request.base_radius, peak_height], collection_name=request.collection_name, tags=["mountain", request.world_id]))
+        if created.status != "success":
+            return retag_result(created, "generate_mountain_range")
+        object_id = str(created.created_object_ids[0])
+        applied = await apply_material(context, ApplyMaterialRequest(request_id=f"{request.request_id}-material-{index}", project_id=project.project_id, material_id=material_id, target_ids=[object_id]))
+        if applied.status not in {"success", "partial_success"}:
+            return retag_result(applied, "generate_mountain_range")
+        created_object_ids.append(object_id)
+        objects.extend(created.model_dump().get("objects", []))
+        peaks.append({"object_id": object_id, "location": location, "height": peak_height})
+    range_id = new_id("mountains")
+    mountain_range = {"mountain_range_id": range_id, "world_id": request.world_id, "name": request.name, "object_ids": created_object_ids, "peaks": peaks, "material_id": material_id}
+    save_metadata_entity(context, project_id=project.project_id, entity_id=range_id, entity_type="world_mountain_range", name=request.name, spec=mountain_range)
+    _append_world_id(world, "mountain_range_ids", range_id)
+    _save_world(context, project.project_id, world)
+    return success_result(request_id=request.request_id, tool_name="generate_mountain_range", summary=f"Generated mountain range '{request.name}' with {len(peaks)} peaks.", project_id=project.project_id, world_id=request.world_id, mountain_range_id=range_id, mountain_range=mountain_range, created_object_ids=created_object_ids, objects=objects)
+
+
+async def create_navigation_markers(context, request: CreateNavigationMarkersRequest):  # type: ignore[no-untyped-def]
+    project = require_project(context, request.project_id)
+    world = _load_world(context, request.request_id, request.world_id, "create_navigation_markers")
+    if isinstance(world, CommonToolResult):
+        return world
+    created_object_ids: list[str] = []
+    objects: list[dict[str, Any]] = []
+    markers: list[dict[str, Any]] = []
+    for index in range(request.marker_count):
+        angle = (2.0 * 3.141592653589793 * index) / max(request.marker_count, 1)
+        location = [request.extent * 0.5 * random.random() * random.choice([-1, 1]), request.extent * 0.5 * random.random() * random.choice([-1, 1]), 0.15]
+        if request.marker_count <= 8:
+            location = [request.extent * 0.5 * random.Random(request.seed + index).random() * (1 if index % 2 == 0 else -1), request.extent * 0.5 * random.Random(request.seed + index + 11).random() * (1 if angle > 3.14159 else -1), 0.15]
+        created = await create_primitive(context, CreatePrimitiveRequest(request_id=f"{request.request_id}-marker-{index}", project_id=project.project_id, primitive_type="uv_sphere", name=f"{request.marker_type.title()}Marker_{index + 1:02d}", location=location, scale=[0.18, 0.18, 0.18], collection_name=request.collection_name, tags=["navigation_marker", f"navigation:{request.marker_type}", request.world_id]))
+        if created.status != "success":
+            return retag_result(created, "create_navigation_markers")
+        object_id = str(created.created_object_ids[0])
+        marker_id = new_id("nav")
+        marker = {"navigation_marker_id": marker_id, "world_id": request.world_id, "object_id": object_id, "marker_type": request.marker_type, "location": location}
+        save_metadata_entity(context, project_id=project.project_id, entity_id=marker_id, entity_type="world_navigation_marker", name=f"{request.marker_type.title()} Marker {index + 1}", spec=marker)
+        _append_world_id(world, "navigation_marker_ids", marker_id)
+        created_object_ids.append(object_id)
+        objects.extend(created.model_dump().get("objects", []))
+        markers.append(marker)
+    _save_world(context, project.project_id, world)
+    return success_result(request_id=request.request_id, tool_name="create_navigation_markers", summary=f"Created {len(markers)} navigation markers.", project_id=project.project_id, world_id=request.world_id, created_object_ids=created_object_ids, objects=objects, markers=markers)
+
+
+async def validate_world_composition(context, request: ValidateWorldCompositionRequest):  # type: ignore[no-untyped-def]
+    require_project(context, request.project_id)
+    world = _load_world(context, request.request_id, request.world_id, "validate_world_composition")
+    if isinstance(world, CommonToolResult):
+        return world
+    terrain = _world_entities(context, request.project_id, "world_terrain", request.world_id)
+    biomes = _world_entities(context, request.project_id, "world_biome", request.world_id)
+    roads = _world_entities(context, request.project_id, "world_road", request.world_id)
+    water = _world_entities(context, request.project_id, "world_water", request.world_id)
+    buildings = _world_entities(context, request.project_id, "world_building", request.world_id)
+    vegetation = _world_entities(context, request.project_id, "world_vegetation", request.world_id)
+    navigation = _world_entities(context, request.project_id, "world_navigation_marker", request.world_id)
+    findings: list[dict[str, Any]] = []
+    if request.require_terrain and not terrain:
+        findings.append({"severity": "error", "code": "missing_terrain", "message": "World has no managed terrain."})
+    if request.require_biomes and not biomes:
+        findings.append({"severity": "warning", "code": "missing_biomes", "message": "World has no biome metadata."})
+    if request.require_navigation and not navigation:
+        findings.append({"severity": "warning", "code": "missing_navigation", "message": "World has no navigation markers."})
+    if not any([roads, water, buildings, vegetation]):
+        findings.append({"severity": "warning", "code": "low_world_detail", "message": "World has terrain but little gameplay or visual detail."})
+    severity_summary = {"info": 0, "warning": 0, "error": 0}
+    for finding in findings:
+        severity = str(finding.get("severity", "info"))
+        if severity in severity_summary:
+            severity_summary[severity] += 1
+    return success_result(request_id=request.request_id, tool_name="validate_world_composition", summary="World composition validation completed.", project_id=request.project_id, world_id=request.world_id, findings=findings, severity_summary=severity_summary, counts={"terrain": len(terrain), "biomes": len(biomes), "roads": len(roads), "water": len(water), "buildings": len(buildings), "vegetation": len(vegetation), "navigation": len(navigation)})
+
+
 async def inspect_world(context, request: InspectWorldRequest):  # type: ignore[no-untyped-def]
     require_project(context, request.project_id)
     world = _load_world(context, request.request_id, request.world_id, "inspect_world")
@@ -926,6 +1120,8 @@ async def inspect_world(context, request: InspectWorldRequest):  # type: ignore[
     buildings = _world_entities(context, request.project_id, "world_building", request.world_id)
     vegetation = _world_entities(context, request.project_id, "world_vegetation", request.world_id)
     regions = _world_entities(context, request.project_id, "world_region", request.world_id)
+    mountain_ranges = _world_entities(context, request.project_id, "world_mountain_range", request.world_id)
+    navigation = _world_entities(context, request.project_id, "world_navigation_marker", request.world_id)
     return success_result(
         request_id=request.request_id,
         tool_name="inspect_world",
@@ -940,6 +1136,8 @@ async def inspect_world(context, request: InspectWorldRequest):  # type: ignore[
             "buildings": len(buildings),
             "vegetation": len(vegetation),
             "regions": len(regions),
+            "mountain_ranges": len(mountain_ranges),
+            "navigation": len(navigation),
         },
         terrain=terrain,
         biomes=biomes,
@@ -948,6 +1146,8 @@ async def inspect_world(context, request: InspectWorldRequest):  # type: ignore[
         buildings=buildings,
         vegetation=vegetation,
         regions=regions,
+        mountain_ranges=mountain_ranges,
+        navigation=navigation,
     )
 
 
@@ -962,6 +1162,10 @@ def register_tools(app) -> None:  # type: ignore[no-untyped-def]
         ("scatter_vegetation", "Scatter simple vegetation proxies across a region.", ScatterVegetationRequest, scatter_vegetation, False),
         ("create_region", "Register a named world region and border guide.", CreateRegionRequest, create_region, False),
         ("detail_region", "Add localized detail to a world region.", DetailRegionRequest, detail_region, False),
+        ("create_world_preset", "Create a complete procedural world preset.", CreateWorldPresetRequest, create_world_preset, False),
+        ("generate_mountain_range", "Generate a mountain range for a managed world.", GenerateMountainRangeRequest, generate_mountain_range, False),
+        ("create_navigation_markers", "Create navigation or gameplay markers for a managed world.", CreateNavigationMarkersRequest, create_navigation_markers, False),
+        ("validate_world_composition", "Validate managed world composition coverage.", ValidateWorldCompositionRequest, validate_world_composition, True),
         ("inspect_world", "Return managed world metadata and related counts.", InspectWorldRequest, inspect_world, True),
     ]
     for name, description, input_model, handler, read_only in specs:
