@@ -423,26 +423,37 @@ class MCPServerApplication:
 
     def _register_family_tools(self) -> None:
         from mcp_server.tools import (
+            aaa_orchestrator,
+            aaa_workflows,
             animation_rigging,
             asset_io,
+            asset_library,
+            batch_ops,
+            camera,
+            collections,
+            game_prep,
             geometry,
             geometry_nodes,
             history,
+            lighting,
             material,
             model_generation,
             modifiers,
             object,
             parts,
+            production_pipeline,
             project,
             qa,
             render,
             repair,
             scene,
+            selection_sets,
             texture_uv,
+            transforms,
             world,
         )
 
-        for module in (project, object, geometry, material, render, asset_io, qa, repair, modifiers, parts, model_generation, history, scene, world, geometry_nodes, texture_uv, animation_rigging):
+        for module in (project, object, geometry, material, render, camera, lighting, game_prep, production_pipeline, aaa_orchestrator, aaa_workflows, asset_io, asset_library, batch_ops, qa, repair, modifiers, collections, transforms, selection_sets, parts, model_generation, history, scene, world, geometry_nodes, texture_uv, animation_rigging):
             module.register_tools(self)
         self.register_tool(
             ToolDefinition(
