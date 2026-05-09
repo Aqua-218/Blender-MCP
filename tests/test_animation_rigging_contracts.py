@@ -8,6 +8,22 @@ from mcp_server.serialization import json_loads
 from mcp_server.server import MCPServerApplication
 from tests.port_utils import find_free_port
 
+ANIMATION_RIGGING_TOOLS = {
+    "create_keyframe_animation",
+    "create_camera_animation",
+    "create_hinge_animation",
+    "create_looping_rotation_animation",
+    "create_simple_rig",
+    "create_mechanical_rig_preset",
+    "create_armature",
+    "add_bone",
+    "set_bone_transform",
+    "auto_weight_limited",
+    "list_armatures",
+    "list_animation_tracks",
+    "validate_animation_rigging",
+}
+
 
 async def _call(app: MCPServerApplication, name: str, arguments: dict[str, object]) -> dict[str, object]:
     response = await app.handle_jsonrpc(
@@ -39,16 +55,13 @@ async def test_animation_and_rigging_tools_are_registered(tmp_path: Path) -> Non
     app = MCPServerApplication(_make_settings(tmp_path))
     try:
         listed = await app.handle_jsonrpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
-        tool_names = {tool["name"] for tool in listed["result"]["tools"]}
-        assert {
-            "create_keyframe_animation",
-            "create_camera_animation",
-            "create_simple_rig",
-            "create_armature",
-            "add_bone",
-            "set_bone_transform",
-            "auto_weight_limited",
-        }.issubset(tool_names)
+        tools = {tool["name"]: tool for tool in listed["result"]["tools"]}
+        assert ANIMATION_RIGGING_TOOLS.issubset(tools)
+        for tool_name in ANIMATION_RIGGING_TOOLS:
+            assert tools[tool_name]["annotations"]["family"] == "animation_rigging"
+        assert tools["list_armatures"]["annotations"]["readOnlyHint"] is True
+        assert tools["list_animation_tracks"]["annotations"]["readOnlyHint"] is True
+        assert tools["validate_animation_rigging"]["annotations"]["readOnlyHint"] is True
     finally:
         await app.stop()
 
@@ -126,6 +139,24 @@ async def test_animation_and_rigging_tools_manage_rigs_tracks_and_bindings(tmp_p
         assert len(simple_rig["bone_ids"]) == 3
         assert simple_rig["binding"]["target_ids"] == [mesh_id]
 
+        mechanical_rig = await _call(
+            app,
+            "create_mechanical_rig_preset",
+            {
+                "request_id": "req-mechanical-rig",
+                "project_id": project_id,
+                "name": "DoorHingeRig",
+                "axis": "z",
+                "joint_count": 3,
+                "segment_length": 0.75,
+                "target_ids": [mesh_id],
+            },
+        )
+        assert mechanical_rig["status"] == "success"
+        assert mechanical_rig["armature"]["preset"] == "mechanical_chain"
+        assert len(mechanical_rig["bone_ids"]) == 5
+        assert mechanical_rig["binding"]["target_ids"] == [mesh_id]
+
         weighted = await _call(
             app,
             "auto_weight_limited",
@@ -167,6 +198,49 @@ async def test_animation_and_rigging_tools_manage_rigs_tracks_and_bindings(tmp_p
         assert animation["status"] == "success"
         mesh_spec = json_loads(app.context.entities.get(mesh_id).spec_json)
         assert mesh_spec["location"] == [2.0, 0.0, 1.0]
+
+        hinge_animation = await _call(
+            app,
+            "create_hinge_animation",
+            {
+                "request_id": "req-hinge-animation",
+                "project_id": project_id,
+                "target_id": mesh_id,
+                "name": "DoorOpen",
+                "axis": "z",
+                "angle_degrees": 90.0,
+                "start_frame": 1,
+                "end_frame": 18,
+            },
+        )
+        looping_animation = await _call(
+            app,
+            "create_looping_rotation_animation",
+            {
+                "request_id": "req-looping-animation",
+                "project_id": project_id,
+                "target_id": mesh_id,
+                "name": "Turntable",
+                "axis": "y",
+                "frame_count": 30,
+            },
+        )
+        assert hinge_animation["status"] == "success"
+        assert hinge_animation["animation"]["keyframes"][-1]["rotation"][2] == pytest.approx(1.57079632679)
+        assert looping_animation["animation"]["keyframes"][-1]["rotation"][1] == pytest.approx(6.28318530718)
+
+        listed_armatures = await _call(app, "list_armatures", {"request_id": "req-list-armatures", "project_id": project_id})
+        listed_tracks = await _call(app, "list_animation_tracks", {"request_id": "req-list-tracks", "project_id": project_id, "target_id": mesh_id})
+        validation = await _call(
+            app,
+            "validate_animation_rigging",
+            {"request_id": "req-validate-animation-rigging", "project_id": project_id, "require_bound_targets": True},
+        )
+        assert listed_armatures["count"] >= 3
+        assert any(armature["armature_id"] == mechanical_rig["armature_id"] for armature in listed_armatures["armatures"])
+        assert listed_tracks["count"] >= 3
+        assert validation["severity_summary"]["error"] == 0
+        assert validation["metrics"]["bone_count"] >= 9
 
         camera = await _call(
             app,
