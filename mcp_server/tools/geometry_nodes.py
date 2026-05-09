@@ -10,7 +10,12 @@ from mcp_server.models.common import (
     failed_result,
     success_result,
 )
-from mcp_server.tools.advanced_helpers import load_entity_spec, retag_result, save_metadata_entity
+from mcp_server.tools.advanced_helpers import (
+    list_entity_specs,
+    load_entity_spec,
+    retag_result,
+    save_metadata_entity,
+)
 from mcp_server.tools.helpers import require_project
 from mcp_server.tools.modifiers import AddModifierRequest, add_modifier
 from mcp_server.utils import new_id
@@ -69,6 +74,47 @@ class CreateProceduralTerrainNodesRequest(CommonToolRequest):
     roughness: float = Field(default=0.5, ge=0.0)
 
 
+class GeometryNodesQueryRequest(CommonToolRequest):
+    project_id: str
+    target_id: str | None = None
+
+
+class GeometryNodesSetupRequest(CommonToolRequest):
+    project_id: str
+    setup_id: str
+
+
+class DuplicateGeometryNodesSetupRequest(GeometryNodesSetupRequest):
+    target_id: str | None = None
+    name: str | None = None
+
+
+class AddNoiseDisplaceNodesRequest(GeometryNodesSetupRequest):
+    scale: float = Field(default=8.0, gt=0.0)
+    strength: float = 0.35
+
+
+class AddCurveScatterNodesRequest(GeometryNodesSetupRequest):
+    count: int = Field(default=32, ge=1, le=10000)
+    radius: float = Field(default=0.15, gt=0.0)
+
+
+class AddInstanceCollectionNodesRequest(GeometryNodesSetupRequest):
+    collection_name: str
+    density: float = Field(default=1.0, ge=0.0)
+
+
+class AddLODSwitchNodesRequest(GeometryNodesSetupRequest):
+    lod_count: int = Field(default=3, ge=1, le=8)
+
+
+class ExposeGeometryNodesParameterRequest(GeometryNodesSetupRequest):
+    node_id: str
+    param_name: str
+    label: str | None = None
+    default_value: Any = None
+
+
 def _load_setup(context, request_id: str, setup_id: str, tool_name: str) -> dict[str, Any] | CommonToolResult:  # type: ignore[no-untyped-def]
     setup = load_entity_spec(context, setup_id, expected_type="geometry_nodes")
     if setup is None:
@@ -90,6 +136,37 @@ def _save_setup(context, project_id: str, setup: dict[str, Any]) -> dict[str, An
         name=str(setup["name"]),
         spec=setup,
     )
+
+
+def _append_preset_nodes(setup: dict[str, Any], specs: list[tuple[str, str, dict[str, Any]]]) -> list[dict[str, Any]]:
+    nodes = list(setup.get("nodes", []))
+    links = list(setup.get("links", []))
+    created: list[dict[str, Any]] = []
+    previous_id = nodes[-1]["node_id"] if nodes else None
+    for index, (node_type, node_name, params) in enumerate(specs):
+        node = {
+            "node_id": new_id("node"),
+            "node_type": node_type,
+            "node_name": node_name,
+            "location": [float((len(nodes) + index) * 220), 0.0],
+            "params": params,
+        }
+        nodes.append(node)
+        created.append(node)
+        if previous_id is not None:
+            links.append(
+                {
+                    "link_id": new_id("link"),
+                    "from_node_id": previous_id,
+                    "from_socket": "Geometry",
+                    "to_node_id": node["node_id"],
+                    "to_socket": "Geometry",
+                }
+            )
+        previous_id = node["node_id"]
+    setup["nodes"] = nodes
+    setup["links"] = links
+    return created
 
 
 async def _create_setup(
@@ -398,6 +475,153 @@ async def create_procedural_terrain_nodes(context, request: CreateProceduralTerr
     )
 
 
+async def list_geometry_nodes_setups(context, request: GeometryNodesQueryRequest):  # type: ignore[no-untyped-def]
+    require_project(context, request.project_id)
+    setups = list_entity_specs(context, request.project_id, "geometry_nodes")
+    if request.target_id is not None:
+        setups = [setup for setup in setups if setup.get("target_id") == request.target_id]
+    return success_result(
+        request_id=request.request_id,
+        tool_name="list_geometry_nodes_setups",
+        summary=f"Listed {len(setups)} geometry nodes setups.",
+        project_id=request.project_id,
+        setups=setups,
+        count=len(setups),
+    )
+
+
+async def duplicate_geometry_nodes_setup(context, request: DuplicateGeometryNodesSetupRequest):  # type: ignore[no-untyped-def]
+    project = require_project(context, request.project_id)
+    source = _load_setup(context, request.request_id, request.setup_id, "duplicate_geometry_nodes_setup")
+    if isinstance(source, CommonToolResult):
+        return source
+    target_id = request.target_id or str(source["target_id"])
+    name = request.name or f"{source['name']}_Copy"
+    created = await _create_setup(
+        context,
+        request_id=request.request_id,
+        project_id=project.project_id,
+        target_id=target_id,
+        tool_name="duplicate_geometry_nodes_setup",
+        name=name,
+        template=str(source.get("template", "custom")),
+        metadata=dict(source.get("metadata", {})),
+    )
+    if created.status != "success":
+        return created
+    setup = created.model_dump()["setup"]
+    setup["nodes"] = [dict(node, node_id=new_id("node")) for node in source.get("nodes", [])]
+    id_map = {old["node_id"]: new["node_id"] for old, new in zip(source.get("nodes", []), setup["nodes"], strict=False)}
+    setup["links"] = [
+        {
+            **link,
+            "link_id": new_id("link"),
+            "from_node_id": id_map.get(link.get("from_node_id"), link.get("from_node_id")),
+            "to_node_id": id_map.get(link.get("to_node_id"), link.get("to_node_id")),
+        }
+        for link in source.get("links", [])
+    ]
+    setup["exposed_parameters"] = [
+        dict(item, parameter_id=new_id("gnparam"), node_id=id_map.get(item.get("node_id"), item.get("node_id")))
+        for item in source.get("exposed_parameters", [])
+    ]
+    _save_setup(context, project.project_id, setup)
+    return success_result(
+        request_id=request.request_id,
+        tool_name="duplicate_geometry_nodes_setup",
+        summary=f"Duplicated geometry nodes setup '{source['name']}'.",
+        project_id=project.project_id,
+        setup_id=setup["setup_id"],
+        source_setup_id=request.setup_id,
+        setup=setup,
+        target_id=target_id,
+    )
+
+
+async def add_noise_displace_nodes(context, request: AddNoiseDisplaceNodesRequest):  # type: ignore[no-untyped-def]
+    project = require_project(context, request.project_id)
+    setup = _load_setup(context, request.request_id, request.setup_id, "add_noise_displace_nodes")
+    if isinstance(setup, CommonToolResult):
+        return setup
+    nodes = _append_preset_nodes(setup, [("NoiseTexture", "Preset Noise", {"scale": request.scale}), ("SetPosition", "Noise Displace", {"strength": request.strength})])
+    setup["template"] = "noise_displace"
+    _save_setup(context, project.project_id, setup)
+    return success_result(request_id=request.request_id, tool_name="add_noise_displace_nodes", summary="Added noise displacement preset nodes.", project_id=project.project_id, setup_id=request.setup_id, nodes=nodes, setup=setup)
+
+
+async def add_curve_scatter_nodes(context, request: AddCurveScatterNodesRequest):  # type: ignore[no-untyped-def]
+    project = require_project(context, request.project_id)
+    setup = _load_setup(context, request.request_id, request.setup_id, "add_curve_scatter_nodes")
+    if isinstance(setup, CommonToolResult):
+        return setup
+    nodes = _append_preset_nodes(
+        setup,
+        [("ResampleCurve", "Scatter Curve Samples", {"count": request.count}), ("CurveToMesh", "Curve Radius", {"radius": request.radius}), ("InstanceOnPoints", "Curve Instances", {})],
+    )
+    setup["template"] = "curve_scatter"
+    _save_setup(context, project.project_id, setup)
+    return success_result(request_id=request.request_id, tool_name="add_curve_scatter_nodes", summary="Added curve scatter preset nodes.", project_id=project.project_id, setup_id=request.setup_id, nodes=nodes, setup=setup)
+
+
+async def add_instance_collection_nodes(context, request: AddInstanceCollectionNodesRequest):  # type: ignore[no-untyped-def]
+    project = require_project(context, request.project_id)
+    setup = _load_setup(context, request.request_id, request.setup_id, "add_instance_collection_nodes")
+    if isinstance(setup, CommonToolResult):
+        return setup
+    nodes = _append_preset_nodes(
+        setup,
+        [("CollectionInfo", "Source Collection", {"collection_name": request.collection_name}), ("DistributePointsOnFaces", "Distribution", {"density": request.density}), ("InstanceOnPoints", "Collection Instances", {"collection_name": request.collection_name})],
+    )
+    setup["metadata"] = {**setup.get("metadata", {}), "collection_name": request.collection_name, "density": request.density}
+    _save_setup(context, project.project_id, setup)
+    return success_result(request_id=request.request_id, tool_name="add_instance_collection_nodes", summary=f"Added collection instancing preset for '{request.collection_name}'.", project_id=project.project_id, setup_id=request.setup_id, nodes=nodes, setup=setup)
+
+
+async def add_lod_switch_nodes(context, request: AddLODSwitchNodesRequest):  # type: ignore[no-untyped-def]
+    project = require_project(context, request.project_id)
+    setup = _load_setup(context, request.request_id, request.setup_id, "add_lod_switch_nodes")
+    if isinstance(setup, CommonToolResult):
+        return setup
+    nodes = _append_preset_nodes(setup, [("Switch", f"LOD {index} Switch", {"lod_level": index}) for index in range(request.lod_count)])
+    setup["metadata"] = {**setup.get("metadata", {}), "lod_count": request.lod_count}
+    _save_setup(context, project.project_id, setup)
+    return success_result(request_id=request.request_id, tool_name="add_lod_switch_nodes", summary=f"Added {request.lod_count} LOD switch nodes.", project_id=project.project_id, setup_id=request.setup_id, nodes=nodes, setup=setup)
+
+
+async def expose_geometry_nodes_parameter(context, request: ExposeGeometryNodesParameterRequest):  # type: ignore[no-untyped-def]
+    project = require_project(context, request.project_id)
+    setup = _load_setup(context, request.request_id, request.setup_id, "expose_geometry_nodes_parameter")
+    if isinstance(setup, CommonToolResult):
+        return setup
+    node_ids = {node["node_id"] for node in setup.get("nodes", [])}
+    if request.node_id not in node_ids:
+        return failed_result(request_id=request.request_id, tool_name="expose_geometry_nodes_parameter", summary=f"Node '{request.node_id}' was not found.", errors=[f"target_not_found: node '{request.node_id}' does not exist"])
+    exposed = {"parameter_id": new_id("gnparam"), "node_id": request.node_id, "param_name": request.param_name, "label": request.label or request.param_name, "default_value": request.default_value}
+    setup["exposed_parameters"] = [*setup.get("exposed_parameters", []), exposed]
+    _save_setup(context, project.project_id, setup)
+    return success_result(request_id=request.request_id, tool_name="expose_geometry_nodes_parameter", summary=f"Exposed geometry nodes parameter '{exposed['label']}'.", project_id=project.project_id, setup_id=request.setup_id, exposed_parameter=exposed, setup=setup)
+
+
+async def validate_geometry_nodes_setup(context, request: GeometryNodesSetupRequest):  # type: ignore[no-untyped-def]
+    require_project(context, request.project_id)
+    setup = _load_setup(context, request.request_id, request.setup_id, "validate_geometry_nodes_setup")
+    if isinstance(setup, CommonToolResult):
+        return setup
+    node_ids = {node["node_id"] for node in setup.get("nodes", [])}
+    findings: list[dict[str, Any]] = []
+    if not node_ids:
+        findings.append({"severity": "warning", "code": "empty_setup", "message": "Geometry nodes setup has no nodes."})
+    for link in setup.get("links", []):
+        if link.get("from_node_id") not in node_ids or link.get("to_node_id") not in node_ids:
+            findings.append({"severity": "error", "code": "broken_link", "message": "Geometry nodes setup contains a link to a missing node.", "link_id": link.get("link_id")})
+    severity_summary = {"info": 0, "warning": 0, "error": 0}
+    for finding in findings:
+        severity = str(finding.get("severity", "info"))
+        if severity in severity_summary:
+            severity_summary[severity] += 1
+    return success_result(request_id=request.request_id, tool_name="validate_geometry_nodes_setup", summary="Geometry nodes setup validation completed.", project_id=request.project_id, setup_id=request.setup_id, setup=setup, findings=findings, severity_summary=severity_summary)
+
+
 def register_tools(app) -> None:  # type: ignore[no-untyped-def]
     specs: list[tuple[str, str, type[BaseModel], Any, bool]] = [
         ("create_geometry_nodes", "Create a managed geometry nodes setup on a mesh target.", CreateGeometryNodesRequest, create_geometry_nodes, False),
@@ -407,6 +631,14 @@ def register_tools(app) -> None:  # type: ignore[no-untyped-def]
         ("create_scatter_node_setup", "Create a scatter-oriented geometry nodes template.", CreateScatterNodeSetupRequest, create_scatter_node_setup, False),
         ("create_procedural_building_nodes", "Create a procedural building geometry nodes template.", CreateProceduralBuildingNodesRequest, create_procedural_building_nodes, False),
         ("create_procedural_terrain_nodes", "Create a procedural terrain geometry nodes template.", CreateProceduralTerrainNodesRequest, create_procedural_terrain_nodes, False),
+        ("list_geometry_nodes_setups", "List managed geometry nodes setups.", GeometryNodesQueryRequest, list_geometry_nodes_setups, True),
+        ("duplicate_geometry_nodes_setup", "Duplicate a managed geometry nodes setup to a target.", DuplicateGeometryNodesSetupRequest, duplicate_geometry_nodes_setup, False),
+        ("add_noise_displace_nodes", "Append a noise displacement preset to a managed setup.", AddNoiseDisplaceNodesRequest, add_noise_displace_nodes, False),
+        ("add_curve_scatter_nodes", "Append a curve scatter preset to a managed setup.", AddCurveScatterNodesRequest, add_curve_scatter_nodes, False),
+        ("add_instance_collection_nodes", "Append collection instancing preset nodes to a managed setup.", AddInstanceCollectionNodesRequest, add_instance_collection_nodes, False),
+        ("add_lod_switch_nodes", "Append LOD switch preset nodes to a managed setup.", AddLODSwitchNodesRequest, add_lod_switch_nodes, False),
+        ("expose_geometry_nodes_parameter", "Expose a managed geometry node parameter.", ExposeGeometryNodesParameterRequest, expose_geometry_nodes_parameter, False),
+        ("validate_geometry_nodes_setup", "Validate managed geometry nodes metadata.", GeometryNodesSetupRequest, validate_geometry_nodes_setup, True),
     ]
     for name, description, input_model, handler, read_only in specs:
         app.register_tool(
