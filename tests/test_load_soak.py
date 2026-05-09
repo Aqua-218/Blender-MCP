@@ -8,6 +8,8 @@ from mcp_server.config import ServerSettings
 from mcp_server.server import MCPServerApplication
 from tests.port_utils import find_free_port
 
+REVISION_ITERATIONS = 20
+
 
 async def _call(app: MCPServerApplication, name: str, arguments: dict[str, object]) -> dict[str, object]:
     response = await app.handle_jsonrpc(
@@ -94,7 +96,7 @@ async def test_repeated_snapshot_loop_preserves_recent_history(tmp_path: Path) -
         )
 
         created_ids: list[str] = []
-        for index in range(8):
+        for index in range(REVISION_ITERATIONS):
             snapshot = await _call(
                 app,
                 "create_snapshot",
@@ -102,11 +104,15 @@ async def test_repeated_snapshot_loop_preserves_recent_history(tmp_path: Path) -
             )
             created_ids.append(str(snapshot["snapshot_id"]))
 
-        listed = await _call(app, "list_snapshots", {"request_id": "req-list", "project_id": project_id})
+        listed = await _call(
+            app,
+            "list_snapshots",
+            {"request_id": "req-list", "project_id": project_id, "limit": REVISION_ITERATIONS + 5},
+        )
         listed_ids = {snapshot["snapshot_id"] for snapshot in listed["snapshots"]}
 
         assert set(created_ids).issubset(listed_ids)
-        assert len(listed["snapshots"]) >= 8
+        assert len(listed["snapshots"]) >= REVISION_ITERATIONS
     finally:
         await app.stop()
 
@@ -153,7 +159,7 @@ async def test_long_session_controller_stays_available(tmp_path: Path) -> None:
         assert first_process is not None
         first_pid = first_process.pid
 
-        for index in range(12):
+        for index in range(REVISION_ITERATIONS):
             await _call(app, "list_objects", {"request_id": f"req-list-{index}", "project_id": project_id})
             await _call(app, "get_runtime_info", {"request_id": f"req-runtime-{index}"})
             await _call(app, "create_snapshot", {"request_id": f"req-snapshot-{index}", "project_id": project_id})
@@ -162,6 +168,6 @@ async def test_long_session_controller_stays_available(tmp_path: Path) -> None:
         assert current_process is not None
         assert current_process.pid == first_pid
         assert app.context.metrics["controller"]["available"] is True
-        assert app.context.metrics["snapshots"]["count"] >= 12
+        assert app.context.metrics["snapshots"]["count"] >= REVISION_ITERATIONS
     finally:
         await app.stop()
