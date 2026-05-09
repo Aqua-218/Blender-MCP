@@ -48,7 +48,16 @@ class RenderComparisonViewsRequest(CommonToolRequest):
     camera_id: str | None = None
 
 
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
+
+
 def _operation_dict(record) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+    output_payload = json_loads(record.output_json)
+    if not isinstance(output_payload, dict):
+        output_payload = {}
     return {
         "operation_id": record.operation_id,
         "tool_name": record.tool_name,
@@ -58,6 +67,12 @@ def _operation_dict(record) -> dict[str, Any]:  # type: ignore[no-untyped-def]
         "duration_ms": record.duration_ms,
         "target_entity_id": record.target_entity_id,
         "user_instruction": record.user_instruction,
+        "output_summary": str(output_payload.get("summary", "")),
+        "created_object_ids": _string_list(output_payload.get("created_object_ids")),
+        "modified_object_ids": _string_list(output_payload.get("modified_object_ids")),
+        "deleted_object_ids": _string_list(output_payload.get("deleted_object_ids")),
+        "file_paths": _string_list(output_payload.get("file_paths")),
+        "image_paths": _string_list(output_payload.get("image_paths")),
         "warnings": json_loads(record.warnings_json),
         "errors": json_loads(record.errors_json),
     }
