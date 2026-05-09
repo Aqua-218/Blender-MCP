@@ -54,6 +54,13 @@ async def test_list_operations_returns_recent(tmp_path: Path) -> None:
         assert result["count"] >= 1
         tool_names = [op["tool_name"] for op in result["operations"]]
         assert "create_primitive" in tool_names
+        primitive_operation = next(op for op in result["operations"] if op["tool_name"] == "create_primitive")
+        assert primitive_operation["output_summary"]
+        assert len(primitive_operation["created_object_ids"]) == 1
+        assert primitive_operation["modified_object_ids"] == []
+        assert primitive_operation["deleted_object_ids"] == []
+        assert primitive_operation["file_paths"] == []
+        assert primitive_operation["image_paths"] == []
     finally:
         await app.stop()
 
