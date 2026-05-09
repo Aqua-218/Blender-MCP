@@ -49,6 +49,10 @@ async def test_world_tools_are_registered(tmp_path: Path) -> None:
             "scatter_vegetation",
             "create_region",
             "detail_region",
+            "create_world_preset",
+            "generate_mountain_range",
+            "create_navigation_markers",
+            "validate_world_composition",
             "inspect_world",
         }.issubset(tool_names)
     finally:
@@ -177,6 +181,48 @@ async def test_world_tools_build_up_managed_world_state(tmp_path: Path) -> None:
         assert detailed["status"] == "success"
         assert detailed["created_object_ids"]
 
+        mountains = await _call(
+            app,
+            "generate_mountain_range",
+            {
+                "request_id": "req-mountains",
+                "project_id": project_id,
+                "world_id": world_id,
+                "name": "North Ridge",
+                "count": 3,
+                "height": 3.0,
+            },
+        )
+        assert mountains["status"] == "success"
+        assert len(mountains["created_object_ids"]) == 3
+
+        navigation = await _call(
+            app,
+            "create_navigation_markers",
+            {
+                "request_id": "req-navigation",
+                "project_id": project_id,
+                "world_id": world_id,
+                "marker_count": 3,
+                "marker_type": "quest",
+            },
+        )
+        assert navigation["status"] == "success"
+        assert len(navigation["markers"]) == 3
+
+        validation = await _call(
+            app,
+            "validate_world_composition",
+            {
+                "request_id": "req-world-validation",
+                "project_id": project_id,
+                "world_id": world_id,
+                "require_navigation": True,
+            },
+        )
+        assert validation["severity_summary"]["error"] == 0
+        assert validation["counts"]["navigation"] == 3
+
         inspected = await _call(
             app,
             "inspect_world",
@@ -194,5 +240,23 @@ async def test_world_tools_build_up_managed_world_state(tmp_path: Path) -> None:
         assert inspected["counts"]["buildings"] >= 2
         assert inspected["counts"]["vegetation"] >= 1
         assert inspected["counts"]["regions"] == 1
+        assert inspected["counts"]["mountain_ranges"] == 1
+        assert inspected["counts"]["navigation"] == 3
+
+        preset = await _call(
+            app,
+            "create_world_preset",
+            {
+                "request_id": "req-world-preset",
+                "project_id": project_id,
+                "name": "Preset Valley",
+                "preset_name": "forest_valley",
+                "size": 20.0,
+                "seed": 7,
+            },
+        )
+        assert preset["status"] == "success"
+        assert preset["world_id"] != world_id
+        assert preset["created_object_ids"]
     finally:
         await app.stop()
