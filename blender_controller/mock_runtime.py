@@ -245,6 +245,8 @@ class MockRuntime(BaseRuntime):
         self.state.cameras = {}
         self.state.active_camera_id = None
         self.state.collections = {"Scene Collection": []}
+        self.state.collection_parents = {"Scene Collection": None}
+        self.state.collection_visibility = {"Scene Collection": {"visible": True, "hide_viewport": False, "hide_render": False}}
         self.state.render_settings = RenderSettingsState()
         blend_file_path.write_text(json_dumps(self._serialize_state(), pretty=True), encoding="utf-8")
         return {
@@ -444,6 +446,137 @@ class MockRuntime(BaseRuntime):
         self.state.dirty = True
         return {"objects": [obj.to_payload()], "modified_object_ids": [obj.object_id]}
 
+    async def cmd_reset_object_transforms(self, payload: dict[str, Any]) -> dict[str, Any]:
+        objects = self._target_objects(payload)
+        for obj in objects:
+            if bool(payload.get("reset_location", True)):
+                obj.location = (0.0, 0.0, 0.0)
+            if bool(payload.get("reset_rotation", True)):
+                obj.rotation = (0.0, 0.0, 0.0)
+            if bool(payload.get("reset_scale", True)):
+                obj.scale = (1.0, 1.0, 1.0)
+            self._sync_specialized_state(obj)
+        return self._transform_result(objects)
+
+    async def cmd_offset_object_transforms(self, payload: dict[str, Any]) -> dict[str, Any]:
+        objects = self._target_objects(payload)
+        location_offset = self._vector3(payload.get("location_offset", [0.0, 0.0, 0.0]))
+        rotation_offset = self._vector3(payload.get("rotation_offset", [0.0, 0.0, 0.0]))
+        scale_multiplier = self._vector3(payload.get("scale_multiplier", [1.0, 1.0, 1.0]))
+        for obj in objects:
+            obj.location = tuple(obj.location[index] + location_offset[index] for index in range(3))
+            obj.rotation = tuple(obj.rotation[index] + rotation_offset[index] for index in range(3))
+            obj.scale = tuple(obj.scale[index] * scale_multiplier[index] for index in range(3))
+            self._sync_specialized_state(obj)
+        return self._transform_result(objects)
+
+    async def cmd_match_object_transform(self, payload: dict[str, Any]) -> dict[str, Any]:
+        source = self._object(str(payload["source_id"]))
+        objects = self._target_objects(payload)
+        for obj in objects:
+            if bool(payload.get("match_location", True)):
+                obj.location = tuple(source.location)
+            if bool(payload.get("match_rotation", True)):
+                obj.rotation = tuple(source.rotation)
+            if bool(payload.get("match_scale", True)):
+                obj.scale = tuple(source.scale)
+            self._sync_specialized_state(obj)
+        return self._transform_result(objects)
+
+    async def cmd_align_objects(self, payload: dict[str, Any]) -> dict[str, Any]:
+        objects = self._target_objects(payload)
+        axis_index = self._axis_index(str(payload.get("axis", "x")))
+        align_to = str(payload.get("align_to", "origin"))
+        points = [self._alignment_point(obj, axis_index, align_to) for obj in objects]
+        target_value = float(payload["target_value"]) if payload.get("target_value") is not None else points[0]
+        for obj, point in zip(objects, points, strict=False):
+            location = list(obj.location)
+            location[axis_index] += target_value - point
+            obj.location = tuple(location)
+            self._sync_specialized_state(obj)
+        return self._transform_result(objects)
+
+    async def cmd_distribute_objects(self, payload: dict[str, Any]) -> dict[str, Any]:
+        objects = self._target_objects(payload)
+        axis_index = self._axis_index(str(payload.get("axis", "x")))
+        ordered = sorted(objects, key=lambda obj: obj.location[axis_index])
+        if len(ordered) <= 1:
+            return self._transform_result(ordered)
+        spacing = payload.get("spacing")
+        if spacing is None:
+            start_value = float(payload.get("start_value", ordered[0].location[axis_index]))
+            end_value = ordered[-1].location[axis_index]
+            step = (end_value - start_value) / float(len(ordered) - 1)
+        else:
+            start_value = float(payload.get("start_value", ordered[0].location[axis_index]))
+            step = float(spacing)
+        for index, obj in enumerate(ordered):
+            location = list(obj.location)
+            location[axis_index] = start_value + (step * index)
+            obj.location = tuple(location)
+            self._sync_specialized_state(obj)
+        return self._transform_result(ordered)
+
+    async def cmd_snap_objects_to_grid(self, payload: dict[str, Any]) -> dict[str, Any]:
+        objects = self._target_objects(payload)
+        grid_size = float(payload.get("grid_size", 1.0))
+        if grid_size <= 0:
+            raise RuntimeCommandError("validation_error", "grid_size must be greater than zero.")
+        axis_indices = [self._axis_index(str(axis)) for axis in payload.get("axes", ["x", "y", "z"])]
+        for obj in objects:
+            location = list(obj.location)
+            for axis_index in axis_indices:
+                location[axis_index] = round(location[axis_index] / grid_size) * grid_size
+            obj.location = tuple(location)
+            self._sync_specialized_state(obj)
+        return self._transform_result(objects)
+
+    async def cmd_place_objects_on_ground(self, payload: dict[str, Any]) -> dict[str, Any]:
+        objects = self._target_objects(payload)
+        ground_z = float(payload.get("ground_z", 0.0))
+        for obj in objects:
+            minimum, _maximum = self._object_bounds(obj)
+            location = list(obj.location)
+            location[2] += ground_z - minimum[2]
+            obj.location = tuple(location)
+            self._sync_specialized_state(obj)
+        return self._transform_result(objects)
+
+    async def cmd_arrange_objects_in_grid(self, payload: dict[str, Any]) -> dict[str, Any]:
+        objects = self._target_objects(payload)
+        columns = max(1, int(payload.get("columns", 4)))
+        spacing = self._vector3(payload.get("spacing", [2.0, 2.0, 0.0]))
+        origin = self._vector3(payload.get("origin", [0.0, 0.0, 0.0]))
+        column_axis = self._axis_index(str(payload.get("column_axis", "x")))
+        row_axis = self._axis_index(str(payload.get("row_axis", "y")))
+        if column_axis == row_axis:
+            raise RuntimeCommandError("validation_error", "column_axis and row_axis must be different.")
+        for index, obj in enumerate(objects):
+            column = index % columns
+            row = index // columns
+            location = list(origin)
+            location[column_axis] += spacing[column_axis] * column
+            location[row_axis] += spacing[row_axis] * row
+            obj.location = tuple(location)
+            self._sync_specialized_state(obj)
+        return self._transform_result(objects)
+
+    async def cmd_mirror_object_transforms(self, payload: dict[str, Any]) -> dict[str, Any]:
+        objects = self._target_objects(payload)
+        axis_index = self._axis_index(str(payload.get("axis", "x")))
+        pivot = float(payload.get("pivot", 0.0))
+        flip_scale = bool(payload.get("flip_scale", False))
+        for obj in objects:
+            location = list(obj.location)
+            location[axis_index] = (2.0 * pivot) - location[axis_index]
+            obj.location = tuple(location)
+            if flip_scale:
+                scale = list(obj.scale)
+                scale[axis_index] *= -1.0
+                obj.scale = tuple(scale)
+            self._sync_specialized_state(obj)
+        return self._transform_result(objects)
+
     async def cmd_set_object_visibility(self, payload: dict[str, Any]) -> dict[str, Any]:
         target_ids = self._resolve_target_ids(payload)
         objects: list[dict[str, Any]] = []
@@ -468,6 +601,153 @@ class MockRuntime(BaseRuntime):
             objects.append(obj.to_payload())
         self.state.dirty = True
         return {"objects": objects}
+
+    async def cmd_list_collections(self, _payload: dict[str, Any]) -> dict[str, Any]:
+        return {"collections": [self._collection_payload(name) for name in self.state.collections]}
+
+    async def cmd_create_collection(self, payload: dict[str, Any]) -> dict[str, Any]:
+        collection_name = str(payload["collection_name"])
+        parent_name = str(payload.get("parent_collection_name") or "Scene Collection")
+        if collection_name in self.state.collections:
+            raise RuntimeCommandError("validation_error", f"Collection '{collection_name}' already exists.")
+        self._collection(parent_name)
+        self.state.collections[collection_name] = []
+        self.state.collection_parents[collection_name] = parent_name
+        self.state.collection_visibility[collection_name] = {"visible": True, "hide_viewport": False, "hide_render": False}
+        self.state.dirty = True
+        return {"collection": self._collection_payload(collection_name)}
+
+    async def cmd_rename_collection(self, payload: dict[str, Any]) -> dict[str, Any]:
+        collection_name = str(payload["collection_name"])
+        new_name = str(payload["new_collection_name"])
+        object_ids = self._collection(collection_name)
+        if collection_name == "Scene Collection":
+            raise RuntimeCommandError("validation_error", "Scene Collection cannot be renamed.")
+        if new_name in self.state.collections:
+            raise RuntimeCommandError("validation_error", f"Collection '{new_name}' already exists.")
+        self.state.collections[new_name] = self.state.collections.pop(collection_name)
+        self.state.collection_parents[new_name] = self.state.collection_parents.pop(collection_name, "Scene Collection")
+        self.state.collection_visibility[new_name] = self.state.collection_visibility.pop(
+            collection_name,
+            {"visible": True, "hide_viewport": False, "hide_render": False},
+        )
+        for child_name, parent_name in list(self.state.collection_parents.items()):
+            if parent_name == collection_name:
+                self.state.collection_parents[child_name] = new_name
+        objects: list[dict[str, Any]] = []
+        for object_id in object_ids:
+            obj = self._object(object_id)
+            if obj.collection == collection_name:
+                obj.collection = new_name
+            objects.append(obj.to_payload())
+        self.state.dirty = True
+        return {
+            "collection": self._collection_payload(new_name),
+            "modified_object_ids": list(object_ids),
+            "objects": objects,
+        }
+
+    async def cmd_delete_collection(self, payload: dict[str, Any]) -> dict[str, Any]:
+        collection_name = str(payload["collection_name"])
+        object_ids = list(self._collection(collection_name))
+        if collection_name == "Scene Collection":
+            raise RuntimeCommandError("validation_error", "Scene Collection cannot be deleted.")
+        child_names = self._collection_children(collection_name)
+        force = bool(payload.get("force", False))
+        if not force and (object_ids or child_names):
+            raise RuntimeCommandError(
+                "validation_error",
+                f"Collection '{collection_name}' is not empty; pass force=true to remove collection membership without deleting objects.",
+            )
+        parent_name = self.state.collection_parents.get(collection_name) or "Scene Collection"
+        relinked_collection_name = parent_name if parent_name in self.state.collections else "Scene Collection"
+        for child_name in child_names:
+            self.state.collection_parents[child_name] = relinked_collection_name
+        objects: list[dict[str, Any]] = []
+        for object_id in object_ids:
+            obj = self._object(object_id)
+            if obj.collection == collection_name:
+                obj.collection = self._first_membership_for_object(object_id, exclude=collection_name) or relinked_collection_name
+            if obj.collection not in self.state.collections:
+                self._ensure_collection(obj.collection)
+            if object_id not in self.state.collections[obj.collection]:
+                self.state.collections[obj.collection].append(object_id)
+            objects.append(obj.to_payload())
+        self.state.collections.pop(collection_name, None)
+        self.state.collection_parents.pop(collection_name, None)
+        self.state.collection_visibility.pop(collection_name, None)
+        self.state.dirty = True
+        return {
+            "modified_object_ids": object_ids,
+            "unlinked_object_ids": object_ids,
+            "rehomed_child_collection_names": child_names,
+            "relinked_collection_name": relinked_collection_name,
+            "objects": objects,
+        }
+
+    async def cmd_link_objects_to_collection(self, payload: dict[str, Any]) -> dict[str, Any]:
+        collection_name = str(payload["collection_name"])
+        self._collection(collection_name)
+        target_ids = self._resolve_target_ids(payload)
+        objects: list[dict[str, Any]] = []
+        for target_id in target_ids:
+            obj = self._object(target_id)
+            if target_id not in self.state.collections[collection_name]:
+                self.state.collections[collection_name].append(target_id)
+            if obj.collection == "Scene Collection":
+                obj.collection = collection_name
+            objects.append(obj.to_payload())
+        self.state.dirty = True
+        return {
+            "collection": self._collection_payload(collection_name),
+            "modified_object_ids": target_ids,
+            "objects": objects,
+        }
+
+    async def cmd_unlink_objects_from_collection(self, payload: dict[str, Any]) -> dict[str, Any]:
+        collection_name = str(payload["collection_name"])
+        self._collection(collection_name)
+        target_ids = self._resolve_target_ids(payload)
+        missing_members = [target_id for target_id in target_ids if target_id not in self.state.collections[collection_name]]
+        if missing_members:
+            raise RuntimeCommandError(
+                "target_not_found",
+                f"Object(s) are not linked to collection '{collection_name}': {', '.join(missing_members)}",
+            )
+        objects: list[dict[str, Any]] = []
+        for target_id in target_ids:
+            obj = self._object(target_id)
+            self.state.collections[collection_name].remove(target_id)
+            if obj.collection == collection_name:
+                obj.collection = self._first_membership_for_object(target_id, exclude=collection_name) or "Scene Collection"
+            if obj.collection not in self.state.collections:
+                self._ensure_collection(obj.collection)
+            if target_id not in self.state.collections[obj.collection]:
+                self.state.collections[obj.collection].append(target_id)
+            objects.append(obj.to_payload())
+        self.state.dirty = True
+        return {
+            "collection": self._collection_payload(collection_name),
+            "modified_object_ids": target_ids,
+            "relinked_collection_name": "Scene Collection",
+            "objects": objects,
+        }
+
+    async def cmd_set_collection_visibility(self, payload: dict[str, Any]) -> dict[str, Any]:
+        collection_name = str(payload["collection_name"])
+        self._collection(collection_name)
+        visibility = self.state.collection_visibility.setdefault(
+            collection_name,
+            {"visible": True, "hide_viewport": False, "hide_render": False},
+        )
+        visible = bool(payload["visible"])
+        if bool(payload.get("set_viewport", True)):
+            visibility["hide_viewport"] = not visible
+        if bool(payload.get("set_render", True)):
+            visibility["hide_render"] = not visible
+        visibility["visible"] = not visibility.get("hide_viewport", False) and not visibility.get("hide_render", False)
+        self.state.dirty = True
+        return {"collection": self._collection_payload(collection_name)}
 
     async def cmd_tag_object(self, payload: dict[str, Any]) -> dict[str, Any]:
         target_ids = self._resolve_target_ids(payload)
@@ -679,6 +959,50 @@ class MockRuntime(BaseRuntime):
         material.properties[payload["property_name"]] = payload["value"]
         self.state.dirty = True
         return {"material": asdict(material)}
+
+    async def cmd_add_material_node(self, payload: dict[str, Any]) -> dict[str, Any]:
+        material = self._material(payload["material_id"])
+        graph = self._material_node_graph(material)
+        node = {
+            "node_id": new_id("mnode"),
+            "node_type": str(payload["node_type"]),
+            "node_name": str(payload.get("node_name") or payload["node_type"]),
+            "location": list(payload.get("location", [0.0, 0.0])),
+            "params": dict(payload.get("params") or {}),
+        }
+        graph["nodes"].append(node)
+        self.state.dirty = True
+        return self._material_node_result(material, node=node)
+
+    async def cmd_set_material_node_param(self, payload: dict[str, Any]) -> dict[str, Any]:
+        material = self._material(payload["material_id"])
+        graph = self._material_node_graph(material)
+        node = self._material_node(graph, payload["node_id"])
+        params = dict(node.get("params", {}))
+        params[str(payload["param_name"])] = payload["value"]
+        node["params"] = params
+        self.state.dirty = True
+        return self._material_node_result(material, node=node)
+
+    async def cmd_connect_material_nodes(self, payload: dict[str, Any]) -> dict[str, Any]:
+        material = self._material(payload["material_id"])
+        graph = self._material_node_graph(material)
+        self._material_node(graph, payload["from_node_id"])
+        self._material_node(graph, payload["to_node_id"])
+        link = {
+            "link_id": new_id("mlink"),
+            "from_node_id": payload["from_node_id"],
+            "from_socket": payload["from_socket"],
+            "to_node_id": payload["to_node_id"],
+            "to_socket": payload["to_socket"],
+        }
+        graph["links"].append(link)
+        self.state.dirty = True
+        return self._material_node_result(material, link=link)
+
+    async def cmd_list_material_nodes(self, payload: dict[str, Any]) -> dict[str, Any]:
+        material = self._material(payload["material_id"])
+        return self._material_node_result(material)
 
     async def cmd_create_pbr_material(self, payload: dict[str, Any]) -> dict[str, Any]:
         properties = {
@@ -962,6 +1286,38 @@ class MockRuntime(BaseRuntime):
 
     def _ensure_collection(self, name: str) -> None:
         self.state.collections.setdefault(name, [])
+        self.state.collection_parents.setdefault(name, None if name == "Scene Collection" else "Scene Collection")
+        self.state.collection_visibility.setdefault(name, {"visible": True, "hide_viewport": False, "hide_render": False})
+
+    def _collection(self, name: str) -> list[str]:
+        if name not in self.state.collections:
+            raise RuntimeCommandError("target_not_found", f"Unknown collection_name: {name}")
+        self._ensure_collection(name)
+        return self.state.collections[name]
+
+    def _collection_children(self, name: str) -> list[str]:
+        return [child_name for child_name, parent_name in self.state.collection_parents.items() if parent_name == name]
+
+    def _first_membership_for_object(self, object_id: str, *, exclude: str) -> str | None:
+        for collection_name, object_ids in self.state.collections.items():
+            if collection_name != exclude and object_id in object_ids:
+                return collection_name
+        return None
+
+    def _collection_payload(self, name: str) -> dict[str, Any]:
+        self._ensure_collection(name)
+        visibility = self.state.collection_visibility[name]
+        object_ids = list(dict.fromkeys(self.state.collections[name]))
+        return {
+            "name": name,
+            "parent_name": self.state.collection_parents.get(name),
+            "children": self._collection_children(name),
+            "object_ids": object_ids,
+            "object_count": len(object_ids),
+            "visible": visibility.get("visible", True),
+            "hide_viewport": visibility.get("hide_viewport", False),
+            "hide_render": visibility.get("hide_render", False),
+        }
 
     def _object(self, object_id: str) -> RuntimeObject:
         if object_id not in self.state.objects:
@@ -978,6 +1334,39 @@ class MockRuntime(BaseRuntime):
         if material_id not in self.state.materials:
             raise RuntimeCommandError("target_not_found", f"Unknown material_id: {material_id}")
         return self.state.materials[material_id]
+
+    @staticmethod
+    def _material_node_graph(material: RuntimeMaterial) -> dict[str, Any]:
+        graph = material.properties.setdefault("node_graph", {"nodes": [], "links": []})
+        graph.setdefault("nodes", [])
+        graph.setdefault("links", [])
+        return graph
+
+    @staticmethod
+    def _material_node(graph: dict[str, Any], node_id: str) -> dict[str, Any]:
+        for node in graph.get("nodes", []):
+            if node.get("node_id") == node_id:
+                return node
+        raise RuntimeCommandError("target_not_found", f"Unknown material node_id: {node_id}")
+
+    def _material_node_result(
+        self,
+        material: RuntimeMaterial,
+        *,
+        node: dict[str, Any] | None = None,
+        link: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        graph = self._material_node_graph(material)
+        result = {
+            "material": asdict(material),
+            "nodes": list(graph.get("nodes", [])),
+            "links": list(graph.get("links", [])),
+        }
+        if node is not None:
+            result["node"] = node
+        if link is not None:
+            result["link"] = link
+        return result
 
     def _light(self, light_id: str) -> RuntimeLight:
         if light_id not in self.state.lights:
@@ -1004,6 +1393,42 @@ class MockRuntime(BaseRuntime):
         for target_id in resolved:
             self._object(target_id)
         return resolved
+
+    def _target_objects(self, payload: dict[str, Any]) -> list[RuntimeObject]:
+        return [self._object(target_id) for target_id in self._resolve_target_ids(payload)]
+
+    def _transform_result(self, objects: list[RuntimeObject]) -> dict[str, Any]:
+        self.state.dirty = True
+        return {
+            "modified_object_ids": [obj.object_id for obj in objects],
+            "objects": [obj.to_payload() for obj in objects],
+        }
+
+    @staticmethod
+    def _vector3(value: Any) -> list[float]:
+        items = list(value)
+        if len(items) != 3:
+            raise RuntimeCommandError("validation_error", "Expected exactly 3 coordinates.")
+        return [float(component) for component in items]
+
+    @staticmethod
+    def _axis_index(axis: str) -> int:
+        axis_map = {"x": 0, "y": 1, "z": 2}
+        if axis not in axis_map:
+            raise RuntimeCommandError("validation_error", f"Unsupported axis: {axis}")
+        return axis_map[axis]
+
+    def _alignment_point(self, obj: RuntimeObject, axis_index: int, align_to: str) -> float:
+        if align_to == "origin":
+            return float(obj.location[axis_index])
+        minimum, maximum = self._object_bounds(obj)
+        if align_to == "min":
+            return float(minimum[axis_index])
+        if align_to == "max":
+            return float(maximum[axis_index])
+        if align_to == "center":
+            return float((minimum[axis_index] + maximum[axis_index]) / 2.0)
+        raise RuntimeCommandError("validation_error", f"Unsupported align_to mode: {align_to}")
 
     def _object_matches(self, obj: RuntimeObject, payload: dict[str, Any]) -> bool:
         if payload.get("names"):
@@ -1081,6 +1506,8 @@ class MockRuntime(BaseRuntime):
             "lights": [asdict(item) for item in self.state.lights.values()],
             "cameras": [asdict(item) for item in self.state.cameras.values()],
             "collections": self.state.collections,
+            "collection_parents": self.state.collection_parents,
+            "collection_visibility": self.state.collection_visibility,
             "render_settings": asdict(self.state.render_settings),
         }
 
@@ -1108,6 +1535,16 @@ class MockRuntime(BaseRuntime):
         self.state.collections = {
             name: list(object_ids) for name, object_ids in payload.get("collections", {}).items()
         }
+        if "Scene Collection" not in self.state.collections:
+            self.state.collections["Scene Collection"] = []
+        self.state.collection_parents = {
+            name: parent_name for name, parent_name in payload.get("collection_parents", {}).items()
+        }
+        self.state.collection_visibility = {
+            name: dict(visibility) for name, visibility in payload.get("collection_visibility", {}).items()
+        }
+        for name in list(self.state.collections):
+            self._ensure_collection(name)
         self.state.render_settings = RenderSettingsState(**payload.get("render_settings", {}))
 
     def _write_preview_image(self, output_path: str) -> str:
