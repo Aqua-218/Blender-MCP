@@ -113,6 +113,11 @@ class RenderOutputRequest(CommonToolRequest):
     project_id: str
     output_path: str | None = None
     camera_id: str | None = None
+    engine: str | None = None
+    resolution_x: int | None = None
+    resolution_y: int | None = None
+    samples: int | None = None
+    transparent_background: bool | None = None
 
 
 class RenderProfileRequest(CommonToolRequest):
@@ -414,6 +419,17 @@ def _render_settings_for_preset(tool_name: str, preset_name: str) -> dict[str, A
     return render_settings
 
 
+def _render_settings_for_output_request(
+    tool_name: str, preset_name: str, request: RenderOutputRequest
+) -> dict[str, Any]:
+    render_settings = dict(_render_settings_for_preset(tool_name, preset_name))
+    for key in ("engine", "resolution_x", "resolution_y", "samples", "transparent_background"):
+        value = getattr(request, key)
+        if value is not None:
+            render_settings[key] = value
+    return render_settings
+
+
 def _default_camera_ids(context, project_id: str) -> list[str]:  # type: ignore[no-untyped-def]
     return [record.entity_id for record in context.entities.list_by_type(project_id, "camera")]
 
@@ -422,12 +438,13 @@ async def _render_once(  # type: ignore[no-untyped-def]
     context,
     *,
     request_id: str,
+    tool_name: str,
     project_id: str,
     project_name: str,
     active_scene_name: str,
     output_path: Path,
     camera_id: str | None,
-    preset_name: str,
+    render_settings: dict[str, Any],
 ):
     result = await context.bridge.invoke(
         "render_preview",
@@ -435,14 +452,14 @@ async def _render_once(  # type: ignore[no-untyped-def]
             "project_id": project_id,
             "output_path": str(output_path),
             "camera_id": camera_id,
-            **_render_settings_for_preset("render_preview", preset_name),
+            **render_settings,
         },
     )
     returned_image_path = context.workspace.canonicalize_output_path(result["image_path"], allowed_extensions=[".png"])
     if returned_image_path != output_path:
         return failed_result(
             request_id=request_id,
-            tool_name="render_preview",
+            tool_name=tool_name,
             summary="Controller returned an unexpected render output path.",
             errors=["validation_error: controller returned an unexpected render output path"],
         )
@@ -473,15 +490,17 @@ async def _render(context, request: RenderOutputRequest, tool_name: str, preset_
             summary="Render preset validation failed.",
             errors=[f"validation_error: unknown render preset '{preset_name}'"],
         )
+    render_settings = _render_settings_for_output_request(tool_name, preset_name, request)
     rendered = await _render_once(
         context,
         request_id=request.request_id,
+        tool_name=tool_name,
         project_id=project.project_id,
         project_name=project.name,
         active_scene_name=project.active_scene_name,
         output_path=output_path,
         camera_id=request.camera_id,
-        preset_name=preset_name,
+        render_settings=render_settings,
     )
     if not isinstance(rendered, tuple):
         result = rendered.model_dump()
@@ -496,7 +515,7 @@ async def _render(context, request: RenderOutputRequest, tool_name: str, preset_
         project_id=project.project_id,
         image_paths=[str(returned_image_path)],
         active_camera_id=result.get("active_camera_id"),
-        render={**result, "image_path": str(returned_image_path)},
+        render={**result, "image_path": str(returned_image_path), "render_settings": {**render_settings}},
     )
 
 
@@ -556,12 +575,13 @@ async def _render_many(context, request, tool_name: str):  # type: ignore[no-unt
         rendered = await _render_once(
             context,
             request_id=request.request_id,
+            tool_name=tool_name,
             project_id=project.project_id,
             project_name=project.name,
             active_scene_name=project.active_scene_name,
             output_path=output_path,
             camera_id=camera_id,
-            preset_name=request.preset_name,
+            render_settings=render_settings,
         )
         if not isinstance(rendered, tuple):
             result = rendered.model_dump()
