@@ -913,6 +913,49 @@ async def test_render_standard_and_final_use_named_presets(tmp_path: Path) -> No
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_render_final_allows_explicit_resolution_override(tmp_path: Path) -> None:
+    port = find_free_port()
+    settings = ServerSettings.from_env(
+        {
+            "BLENDER_MCP_WORKSPACE_ROOTS": "workspace",
+            "BLENDER_MCP_CONTROLLER_MODE": "mock",
+            "BLENDER_MCP_CONTROLLER_PORT": str(port),
+        },
+        base_dir=tmp_path,
+    )
+    app = MCPServerApplication(settings)
+    try:
+        project = await _call(
+            app,
+            "create_project",
+            {"request_id": "render-override-project", "name": "Render Override"},
+        )
+        project_id = str(project["project_id"])
+
+        final = await _call(
+            app,
+            "render_final",
+            {
+                "request_id": "render-final-override",
+                "project_id": project_id,
+                "resolution_x": 1280,
+                "resolution_y": 720,
+                "transparent_background": False,
+            },
+        )
+
+        assert final["status"] == "success"
+        assert final["render"]["render_settings"]["engine"] == "CYCLES"
+        assert final["render"]["render_settings"]["resolution_x"] == 1280
+        assert final["render"]["render_settings"]["resolution_y"] == 720
+        assert final["render"]["render_settings"]["transparent_background"] is False
+        assert Path(str(final["image_paths"][0])).exists()
+    finally:
+        await app.stop()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_render_multiview_outputs_one_image_per_camera(tmp_path: Path) -> None:
     port = find_free_port()
     settings = ServerSettings.from_env(
