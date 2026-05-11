@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from mcp_server.config import ServerSettings
+from mcp_server.models.common import failed_result
 from mcp_server.serialization import json_loads
 from mcp_server.server import MCPServerApplication
 from tests.port_utils import find_free_port
@@ -49,6 +50,44 @@ async def test_scene_tools_are_registered(tmp_path: Path) -> None:
             "generate_environment",
             "create_composition",
         }.issubset(tool_names)
+    finally:
+        await app.stop()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_create_scene_keeps_ground_when_ground_material_creation_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail_ground_material(_context, request):  # type: ignore[no-untyped-def]
+        return failed_result(
+            request_id=request.request_id,
+            tool_name="create_pbr_material",
+            summary="Principled BSDF node is unavailable.",
+            errors=["blender_execution_error: Principled BSDF node is unavailable."],
+        )
+
+    monkeypatch.setattr("mcp_server.tools.scene.create_pbr_material", fail_ground_material)
+    app = MCPServerApplication(_make_settings(tmp_path))
+    try:
+        project = await _call(app, "create_project", {"request_id": "req-project", "name": "Scene Material Fallback"})
+        project_id = str(project["project_id"])
+
+        scene = await _call(
+            app,
+            "create_scene",
+            {
+                "request_id": "req-scene-material-fallback",
+                "project_id": project_id,
+                "name": "Fallback Scene",
+            },
+        )
+
+        assert scene["status"] == "partial_success"
+        assert scene["created_object_ids"]
+        assert scene["material"] is None
+        assert "Ground material was skipped" in scene["warnings"][0]
     finally:
         await app.stop()
 

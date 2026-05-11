@@ -10,6 +10,7 @@ from mcp_server.models.common import (
     CommonToolRequest,
     CommonToolResult,
     failed_result,
+    partial_success_result,
     success_result,
 )
 from mcp_server.tools.advanced_helpers import (
@@ -158,6 +159,7 @@ async def create_scene(context, request: CreateSceneRequest):  # type: ignore[no
     created_object_ids: list[str] = []
     scene_objects: list[dict[str, Any]] = []
     ground_material: dict[str, Any] | None = None
+    warnings: list[str] = []
 
     if request.create_ground:
         ground = await create_primitive(
@@ -189,19 +191,20 @@ async def create_scene(context, request: CreateSceneRequest):  # type: ignore[no
             ),
         )
         if ground_material_result.status != "success":
-            return retag_result(ground_material_result, "create_scene")
-        ground_material = ground_material_result.model_dump().get("material")
-        applied = await apply_material(
-            context,
-            ApplyMaterialRequest(
-                request_id=request.request_id,
-                project_id=request.project_id,
-                material_id=str(ground_material["material_id"]),
-                target_ids=created_object_ids,
-            ),
-        )
-        if applied.status not in {"success", "partial_success"}:
-            return retag_result(applied, "create_scene")
+            warnings.append(f"Ground material was skipped: {ground_material_result.summary}")
+        else:
+            ground_material = ground_material_result.model_dump().get("material")
+            applied = await apply_material(
+                context,
+                ApplyMaterialRequest(
+                    request_id=request.request_id,
+                    project_id=request.project_id,
+                    material_id=str(ground_material["material_id"]),
+                    target_ids=created_object_ids,
+                ),
+            )
+            if applied.status not in {"success", "partial_success"}:
+                warnings.append(f"Ground material assignment was skipped: {applied.summary}")
 
     scene = {
         "scene_id": scene_id,
@@ -220,10 +223,12 @@ async def create_scene(context, request: CreateSceneRequest):  # type: ignore[no
         name=request.name,
         spec=scene,
     )
-    return success_result(
+    result_factory = partial_success_result if warnings else success_result
+    return result_factory(
         request_id=request.request_id,
         tool_name="create_scene",
         summary=f"Created scene '{request.name}'.",
+        warnings=warnings or None,
         project_id=project.project_id,
         scene_id=scene_id,
         scene=scene,
