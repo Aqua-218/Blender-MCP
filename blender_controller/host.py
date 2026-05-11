@@ -168,6 +168,29 @@ class ControllerBridgeServer:
                     with suppress(asyncio.CancelledError, RuntimeCommandError):
                         await dispatch_task
                     break
+                except Exception as exc:
+                    heartbeat_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await heartbeat_task
+                    self.logger.exception(
+                        "controller_request_failed",
+                        extra={
+                            "request_id": request.request_id,
+                            "command": request.command,
+                            "status": "failed",
+                            "error_code": "internal_error",
+                        },
+                    )
+                    await self._send(
+                        writer,
+                        BridgeError(
+                            request_id=request.request_id,
+                            command=request.command,
+                            error_code="internal_error",
+                            message=f"Controller command failed: {exc}",
+                        ),
+                        send_lock,
+                    )
                 finally:
                     self.active_requests.pop(request.request_id, None)
                     if not disconnect_task.done():

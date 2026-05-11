@@ -49,6 +49,59 @@ class CoordinatedRuntime(BaseRuntime):
         return {"status": "mutation_complete"}
 
 
+class ExplodingRuntime(BaseRuntime):
+    async def cmd_explode(self, _payload: dict[str, object]) -> dict[str, object]:
+        raise AttributeError("missing runtime helper")
+
+
+@pytest.mark.asyncio
+async def test_host_returns_bridge_error_for_unexpected_runtime_exception(tmp_path):
+    port = find_free_port()
+    settings = ControllerSettings.model_validate(
+        {
+            "host": "127.0.0.1",
+            "port": port,
+            "shared_secret": "host-secret",
+            "heartbeat_seconds": 5.0,
+            "backend": "mock",
+            "repo_root": tmp_path,
+        }
+    )
+    server = ControllerBridgeServer(settings)
+    server.runtime = ExplodingRuntime()
+    await server.start()
+    assert server.server is not None
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write(
+            (
+                json_dumps(
+                    BridgeRequest(
+                        request_id="explode-test",
+                        command="explode",
+                        auth_token="host-secret",
+                        payload={},
+                        read_only=False,
+                    ).model_dump()
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        await writer.drain()
+
+        assert json.loads((await reader.readline()).decode("utf-8"))["message_type"] == "heartbeat"
+        response = json.loads((await asyncio.wait_for(reader.readline(), timeout=1.0)).decode("utf-8"))
+
+        assert response["message_type"] == "error"
+        assert response["error_code"] == "internal_error"
+        assert "missing runtime helper" in response["message"]
+        writer.close()
+        await writer.wait_closed()
+    finally:
+        server.server.close()
+        await server.server.wait_closed()
+
+
 @pytest.mark.asyncio
 async def test_host_cancels_cancellable_request_when_client_disconnects(tmp_path):
     port = find_free_port()

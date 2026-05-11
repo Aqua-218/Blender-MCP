@@ -713,6 +713,50 @@ def test_blender_runtime_material_payload_tracks_explicit_supported_properties(m
     }
 
 
+def test_blender_runtime_material_properties_fall_back_without_principled_bsdf(monkeypatch) -> None:
+    class FakeMaterial(dict):
+        def __init__(self, name: str):
+            super().__init__()
+            self.name = name
+            self.use_nodes = True
+            self.node_tree = SimpleNamespace(nodes={})
+            self.diffuse_color = [1.0, 1.0, 1.0, 1.0]
+
+    class FakeMaterials(list):
+        def new(self, name: str):
+            material = FakeMaterial(name)
+            self.append(material)
+            return material
+
+    fake_bpy = SimpleNamespace(
+        app=SimpleNamespace(version=(4, 0, 0)),
+        context=SimpleNamespace(scene=SimpleNamespace(name="Scene")),
+        data=SimpleNamespace(materials=FakeMaterials()),
+    )
+    monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
+
+    runtime = BlenderRuntime()
+    created = asyncio.run(
+        runtime.cmd_create_pbr_material(
+            {
+                "name": "FallbackMaterial",
+                "base_color": [0.2, 0.3, 0.4, 1.0],
+                "roughness": 0.8,
+                "metallic": 0.1,
+            }
+        )
+    )
+
+    assert created["material"]["properties"] == {
+        "base_color": [0.2, 0.3, 0.4, 1.0],
+        "roughness": 0.8,
+        "metallic": 0.1,
+    }
+    material = fake_bpy.data.materials[0]
+    assert material["base_color"] == [0.2, 0.3, 0.4, 1.0]
+    assert material.diffuse_color == [0.2, 0.3, 0.4, 1.0]
+
+
 def test_blender_runtime_apply_material_filters_unsupported_targets(monkeypatch) -> None:
     class FakeMaterial(dict):
         def __init__(self, material_id: str, name: str):
@@ -774,6 +818,64 @@ def test_blender_runtime_apply_material_filters_unsupported_targets(monkeypatch)
     )
 
     assert light_only_result["objects"] == []
+
+
+def test_blender_runtime_nodes_modifier_is_virtual_and_does_not_call_blender_modifier_api(monkeypatch) -> None:
+    class FakeModifiers(list):
+        def __contains__(self, name: object) -> bool:
+            return any(modifier.name == name for modifier in self)
+
+        def get(self, name: str):
+            return next((modifier for modifier in self if modifier.name == name), None)
+
+        def new(self, *, name: str, type: str):  # noqa: A002
+            if type == "NODES":
+                raise AssertionError("NODES modifiers should be stored virtually")
+            modifier = SimpleNamespace(name=name, type=type)
+            self.append(modifier)
+            return modifier
+
+    class FakeObject(dict):
+        def __init__(self):
+            super().__init__(mcp_id="obj-building")
+            self.name = "Building"
+            self.type = "MESH"
+            self.location = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            self.rotation_euler = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            self.scale = SimpleNamespace(x=1.0, y=1.0, z=1.0)
+            self.hide_viewport = False
+            self.users_collection = [SimpleNamespace(name="Scene Collection")]
+            self.data = SimpleNamespace(materials=[], vertices=[], edges=[], polygons=[])
+            self.modifiers = FakeModifiers()
+
+        def as_pointer(self) -> int:
+            return 101
+
+    fake_object = FakeObject()
+    fake_bpy = SimpleNamespace(
+        app=SimpleNamespace(version=(4, 0, 0)),
+        context=SimpleNamespace(scene=SimpleNamespace(name="Scene")),
+        data=SimpleNamespace(objects=[fake_object], materials=[]),
+    )
+    monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
+
+    runtime = BlenderRuntime()
+    added = asyncio.run(
+        runtime.cmd_add_modifier(
+            {
+                "target_id": "obj-building",
+                "modifier_type": "NODES",
+                "name": "ProceduralBuildingNodes",
+                "params": {"floors": 6},
+            }
+        )
+    )
+    listed = asyncio.run(runtime.cmd_list_modifiers({"target_id": "obj-building"}))
+
+    assert added["modifiers"] == [
+        {"type": "NODES", "name": "ProceduralBuildingNodes", "params": {"floors": 6}, "virtual": True}
+    ]
+    assert listed["modifiers"] == added["modifiers"]
 
 
 def test_blender_runtime_rejects_wrong_object_types_for_light_and_camera_commands(monkeypatch, tmp_path: Path) -> None:

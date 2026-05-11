@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ class BlenderRuntime(BaseRuntime):
     _PROJECT_NAME_KEY = "mcp_project_name"
     _PROJECT_TEMPLATE_KEY = "mcp_template_type"
     _MATERIAL_PROPERTIES_KEY = "mcp_material_properties_json"
+    _VIRTUAL_MODIFIERS_KEY = "mcp_virtual_modifiers_json"
 
     def __init__(self) -> None:
         super().__init__()
@@ -1260,16 +1262,20 @@ class BlenderRuntime(BaseRuntime):
             return {}
         if not material.use_nodes or material.node_tree is None:
             return tracked
-        bsdf = material.node_tree.nodes.get("Principled BSDF")
+        bsdf = self._principled_bsdf_node(material, create=False)
         if bsdf is None:
             return tracked
         properties: dict[str, Any] = {}
         for property_name, fallback in tracked.items():
-            socket_name = self._material_socket_name(property_name)
-            if socket_name is None or socket_name not in bsdf.inputs:
+            socket = None
+            for socket_name in self._material_socket_names(property_name):
+                socket = self._node_socket(bsdf.inputs, socket_name)
+                if socket is not None:
+                    break
+            if socket is None or not hasattr(socket, "default_value"):
                 properties[property_name] = fallback
                 continue
-            default_value = bsdf.inputs[socket_name].default_value
+            default_value = socket.default_value
             if isinstance(fallback, list):
                 properties[property_name] = list(default_value)
             else:
@@ -1277,30 +1283,84 @@ class BlenderRuntime(BaseRuntime):
         return properties
 
     def _set_material_property(self, material, property_name: str, value: Any) -> None:  # type: ignore[no-untyped-def]
-        material.use_nodes = True
-        if material.node_tree is None:
-            raise RuntimeCommandError("blender_execution_error", "Material node tree is unavailable.")
-        bsdf = material.node_tree.nodes.get("Principled BSDF")
-        if bsdf is None:
-            raise RuntimeCommandError("blender_execution_error", "Principled BSDF node is unavailable.")
         self._remember_material_property(material, property_name, value)
-        socket_name = self._material_socket_name(property_name)
-        if socket_name is None or socket_name not in bsdf.inputs:
-            material[property_name] = value
+        material.use_nodes = True
+        bsdf = self._principled_bsdf_node(material)
+        if bsdf is None:
+            self._apply_material_property_fallback(material, property_name, value)
             return
-        bsdf.inputs[socket_name].default_value = value
+        for socket_name in self._material_socket_names(property_name):
+            socket = self._node_socket(bsdf.inputs, socket_name)
+            if socket is None or not hasattr(socket, "default_value"):
+                continue
+            try:
+                socket.default_value = value
+            except TypeError:
+                socket.default_value = tuple(value) if isinstance(value, list) else value
+            return
+        self._apply_material_property_fallback(material, property_name, value)
 
     @classmethod
-    def _material_socket_name(cls, property_name: str) -> str | None:
+    def _material_socket_names(cls, property_name: str) -> tuple[str, ...]:
         return {
-            "base_color": "Base Color",
-            "roughness": "Roughness",
-            "metallic": "Metallic",
-            "specular": "Specular IOR Level",
-            "alpha": "Alpha",
-            "emission_color": "Emission Color",
-            "emission_strength": "Emission Strength",
-        }.get(property_name)
+            "base_color": ("Base Color",),
+            "roughness": ("Roughness",),
+            "metallic": ("Metallic",),
+            "specular": ("Specular IOR Level", "Specular"),
+            "alpha": ("Alpha",),
+            "emission_color": ("Emission Color", "Emission"),
+            "emission_strength": ("Emission Strength",),
+        }.get(property_name, ())
+
+    def _principled_bsdf_node(self, material, *, create: bool = True):  # type: ignore[no-untyped-def]
+        node_tree = getattr(material, "node_tree", None)
+        if node_tree is None:
+            return None
+        nodes = getattr(node_tree, "nodes", None)
+        if nodes is None:
+            return None
+        getter = getattr(nodes, "get", None)
+        if callable(getter):
+            named = getter("Principled BSDF")
+            if named is not None:
+                return named
+        for node in nodes:
+            if getattr(node, "bl_idname", None) == "ShaderNodeBsdfPrincipled":
+                return node
+            if getattr(node, "type", None) == "BSDF_PRINCIPLED":
+                return node
+        if not create:
+            return None
+        creator = getattr(nodes, "new", None)
+        if not callable(creator):
+            return None
+        with suppress(Exception):
+            return creator(type="ShaderNodeBsdfPrincipled")
+        return None
+
+    def _apply_material_property_fallback(self, material, property_name: str, value: Any) -> None:  # type: ignore[no-untyped-def]
+        material[property_name] = value
+        if property_name == "base_color":
+            with suppress(Exception):
+                material.diffuse_color = value
+        elif property_name == "alpha":
+            with suppress(Exception):
+                color = list(getattr(material, "diffuse_color", [1.0, 1.0, 1.0, 1.0]))
+                while len(color) < 4:
+                    color.append(1.0)
+                color[3] = float(value)
+                material.diffuse_color = color
+            with suppress(Exception):
+                material.blend_method = "BLEND"
+        elif property_name == "roughness":
+            with suppress(Exception):
+                material.roughness = float(value)
+        elif property_name == "metallic":
+            with suppress(Exception):
+                material.metallic = float(value)
+        elif property_name == "specular":
+            with suppress(Exception):
+                material.specular_intensity = float(value)
 
     def _tracked_material_properties(self, material) -> dict[str, Any]:  # type: ignore[no-untyped-def]
         raw = material.get(self._MATERIAL_PROPERTIES_KEY)
@@ -1316,6 +1376,32 @@ class BlenderRuntime(BaseRuntime):
         properties = self._tracked_material_properties(material)
         properties[property_name] = json.loads(json.dumps(value))
         material[self._MATERIAL_PROPERTIES_KEY] = json.dumps(properties)
+
+    def _virtual_modifiers(self, obj) -> list[dict[str, Any]]:  # type: ignore[no-untyped-def]
+        raw = obj.get(self._VIRTUAL_MODIFIERS_KEY)
+        if not raw:
+            return []
+        try:
+            modifiers = json.loads(str(raw))
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(modifiers, list):
+            return []
+        return [modifier for modifier in modifiers if isinstance(modifier, dict)]
+
+    def _save_virtual_modifiers(self, obj, modifiers: list[dict[str, Any]]) -> None:  # type: ignore[no-untyped-def]
+        obj[self._VIRTUAL_MODIFIERS_KEY] = json.dumps(modifiers)
+
+    def _modifier_payloads(self, obj) -> list[dict[str, Any]]:  # type: ignore[no-untyped-def]
+        return [{"type": modifier.type, "name": modifier.name} for modifier in obj.modifiers] + [
+            {
+                "type": str(modifier.get("type", "NODES")),
+                "name": str(modifier.get("name", "GeometryNodes")),
+                "params": dict(modifier.get("params") or {}),
+                "virtual": True,
+            }
+            for modifier in self._virtual_modifiers(obj)
+        ]
 
     def _light_payload(self, light_object) -> dict[str, Any]:  # type: ignore[no-untyped-def]
         light_data = light_object.data
@@ -1433,34 +1519,49 @@ class BlenderRuntime(BaseRuntime):
         }
 
     async def cmd_add_modifier(self, payload: dict[str, Any]) -> dict[str, Any]:
-        obj = self._require_object(payload["target_id"])
+        obj = self._object_by_id(payload["target_id"])
         modifier_type: str = payload["modifier_type"]
         name: str = str(payload.get("name") or modifier_type)
         params: dict[str, Any] = dict(payload.get("params") or {})
-        if name in obj.modifiers:
+        if name in obj.modifiers or any(modifier["name"] == name for modifier in self._virtual_modifiers(obj)):
             raise RuntimeCommandError("validation_error", f"A modifier named '{name}' already exists.")
+        if modifier_type == "NODES":
+            modifiers = [*self._virtual_modifiers(obj), {"type": modifier_type, "name": name, "params": params}]
+            self._save_virtual_modifiers(obj, modifiers)
+            return {"modifier_name": name, "modifiers": self._modifier_payloads(obj), "objects": [self._object_payload(obj)]}
         mod = obj.modifiers.new(name=name, type=modifier_type)
         for key, value in params.items():
             if hasattr(mod, key):
                 setattr(mod, key, value)
-        modifiers = [{"type": m.type, "name": m.name} for m in obj.modifiers]
-        return {"modifier_name": name, "modifiers": modifiers, "objects": [self._object_payload(obj)]}
+        return {"modifier_name": name, "modifiers": self._modifier_payloads(obj), "objects": [self._object_payload(obj)]}
 
     async def cmd_remove_modifier(self, payload: dict[str, Any]) -> dict[str, Any]:
-        obj = self._require_object(payload["target_id"])
+        obj = self._object_by_id(payload["target_id"])
         modifier_name: str = payload["modifier_name"]
         mod = obj.modifiers.get(modifier_name)
         if mod is None:
+            virtual_modifiers = self._virtual_modifiers(obj)
+            filtered = [modifier for modifier in virtual_modifiers if modifier["name"] != modifier_name]
+            if len(filtered) != len(virtual_modifiers):
+                self._save_virtual_modifiers(obj, filtered)
+                return {"modifiers": self._modifier_payloads(obj), "objects": [self._object_payload(obj)]}
+        if mod is None:
             raise RuntimeCommandError("target_not_found", f"Modifier '{modifier_name}' not found.")
         obj.modifiers.remove(mod)
-        modifiers = [{"type": m.type, "name": m.name} for m in obj.modifiers]
-        return {"modifiers": modifiers, "objects": [self._object_payload(obj)]}
+        return {"modifiers": self._modifier_payloads(obj), "objects": [self._object_payload(obj)]}
 
     async def cmd_set_modifier(self, payload: dict[str, Any]) -> dict[str, Any]:
-        obj = self._require_object(payload["target_id"])
+        obj = self._object_by_id(payload["target_id"])
         modifier_name: str = payload["modifier_name"]
         params: dict[str, Any] = dict(payload.get("params") or {})
         mod = obj.modifiers.get(modifier_name)
+        if mod is None:
+            virtual_modifiers = self._virtual_modifiers(obj)
+            for modifier in virtual_modifiers:
+                if modifier["name"] == modifier_name:
+                    modifier["params"] = {**dict(modifier.get("params") or {}), **params}
+                    self._save_virtual_modifiers(obj, virtual_modifiers)
+                    return {"modifiers": self._modifier_payloads(obj), "objects": [self._object_payload(obj)]}
         if mod is None:
             raise RuntimeCommandError("target_not_found", f"Modifier '{modifier_name}' not found.")
         unsupported = []
@@ -1471,21 +1572,17 @@ class BlenderRuntime(BaseRuntime):
                 unsupported.append(key)
         if unsupported:
             raise RuntimeCommandError("validation_error", f"Unsupported modifier parameter(s): {', '.join(unsupported)}")
-        modifiers = [{"type": m.type, "name": m.name} for m in obj.modifiers]
-        return {"modifiers": modifiers, "objects": [self._object_payload(obj)]}
+        return {"modifiers": self._modifier_payloads(obj), "objects": [self._object_payload(obj)]}
 
     async def cmd_apply_modifier(self, payload: dict[str, Any]) -> dict[str, Any]:
-        obj = self._require_object(payload["target_id"])
+        obj = self._object_by_id(payload["target_id"])
         modifier_name: str = payload["modifier_name"]
         if modifier_name not in obj.modifiers:
             raise RuntimeCommandError("target_not_found", f"Modifier '{modifier_name}' not found.")
         self.bpy.context.view_layer.objects.active = obj
         self.bpy.ops.object.modifier_apply(modifier=modifier_name)
-        modifiers = [{"type": m.type, "name": m.name} for m in obj.modifiers]
-        return {"modifiers": modifiers, "objects": [self._object_payload(obj)]}
+        return {"modifiers": self._modifier_payloads(obj), "objects": [self._object_payload(obj)]}
 
     async def cmd_list_modifiers(self, payload: dict[str, Any]) -> dict[str, Any]:
-        obj = self._require_object(payload["target_id"])
-        modifiers = [{"type": m.type, "name": m.name} for m in obj.modifiers]
-        return {"modifiers": modifiers}
-
+        obj = self._object_by_id(payload["target_id"])
+        return {"modifiers": self._modifier_payloads(obj)}
