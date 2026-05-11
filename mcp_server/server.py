@@ -948,6 +948,22 @@ class MCPServerApplication:
                     return
                 self._send_response_with_body(HTTPStatus.NO_CONTENT, origin=origin)
 
+            def do_GET(self) -> None:  # noqa: N802
+                self._send_response_with_body(
+                    HTTPStatus.METHOD_NOT_ALLOWED,
+                    b"SSE streams are not supported by this endpoint",
+                    origin=self.headers.get("Origin"),
+                    extra_headers={"Allow": "POST, OPTIONS"},
+                )
+
+            def do_DELETE(self) -> None:  # noqa: N802
+                self._send_response_with_body(
+                    HTTPStatus.METHOD_NOT_ALLOWED,
+                    b"Session termination is not supported by this endpoint",
+                    origin=self.headers.get("Origin"),
+                    extra_headers={"Allow": "POST, OPTIONS"},
+                )
+
             def do_POST(self) -> None:  # noqa: N802
                 origin = self.headers.get("Origin")
                 status, message, authenticated_role, auth_context = application._authenticate_http_request(self)
@@ -1008,6 +1024,13 @@ class MCPServerApplication:
                         auth_context=auth_context,
                     )
                 )
+                if response is None:
+                    self._send_response_with_body(
+                        HTTPStatus.ACCEPTED,
+                        origin=origin,
+                        content_type="application/json",
+                    )
+                    return
                 body = (json_dumps(response) + "\n").encode("utf-8")
                 self._send_response_with_body(
                     HTTPStatus.OK,

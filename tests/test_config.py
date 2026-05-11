@@ -60,6 +60,22 @@ def test_authenticated_http_transport_allows_non_loopback_when_token_is_configur
     assert settings.http_auth_token == "top-secret"
 
 
+def test_explicit_unsafe_http_transport_allows_non_loopback_without_token(tmp_path: Path) -> None:
+    settings = ServerSettings.from_env(
+        {
+            "BLENDER_MCP_TRANSPORT": "http",
+            "BLENDER_MCP_HTTP_HOST": "0.0.0.0",
+            "BLENDER_MCP_ENABLE_UNAUTHENTICATED_HTTP": "true",
+        },
+        base_dir=tmp_path,
+    )
+
+    assert settings.transport == "http"
+    assert settings.http_host == "0.0.0.0"
+    assert settings.unsafe_http_enabled is True
+    assert settings.http_auth_token is None
+
+
 def test_controller_host_must_remain_loopback(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="loopback"):
         ServerSettings.from_env(

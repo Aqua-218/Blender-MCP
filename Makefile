@@ -1,6 +1,6 @@
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 
-.PHONY: lint typecheck test test-integration test-load test-phase0 test-blender-smoke package-check schema-export schema-check run-stdio run-http-unsafe controller-smoke
+.PHONY: lint typecheck test test-integration test-load test-phase0 test-blender-smoke package-check schema-export schema-check run-stdio run-http-unsafe run-http-remote-unsafe controller-smoke
 
 lint:
 	$(PYTHON) -m ruff check .
@@ -44,6 +44,9 @@ run-stdio:
 
 run-http-unsafe:
 	BLENDER_MCP_ENABLE_UNAUTHENTICATED_HTTP=true $(PYTHON) -m mcp_server.main --transport http
+
+run-http-remote-unsafe:
+	BLENDER_MCP_ENABLE_UNAUTHENTICATED_HTTP=true BLENDER_MCP_HTTP_HOST=0.0.0.0 $(PYTHON) -m mcp_server.main --transport http
 
 controller-smoke:
 	$(PYTHON) -m blender_controller.smoke

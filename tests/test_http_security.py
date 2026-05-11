@@ -81,6 +81,17 @@ def _options(settings: ServerSettings, *, origin: str | None = None) -> tuple[in
     return status, response_headers
 
 
+def _get(settings: ServerSettings) -> tuple[int, str, dict[str, str]]:
+    connection = HTTPConnection(settings.http_host, settings.http_port, timeout=5)
+    connection.request("GET", "/")
+    response = connection.getresponse()
+    body = response.read().decode("utf-8")
+    response_headers = {key: value for key, value in response.getheaders()}
+    status = response.status
+    connection.close()
+    return status, body, response_headers
+
+
 def _tool_call_payload(name: str, arguments: dict[str, object]) -> dict[str, object]:
     return {
         "jsonrpc": "2.0",
@@ -111,6 +122,57 @@ def test_http_transport_rejects_missing_or_invalid_auth_token(tmp_path: Path) ->
         assert missing_status == 401
         assert invalid_status == 401
         assert app.context.metrics["security"]["http_auth_failures"] >= 2
+    finally:
+        app.shutdown_http_server()
+        thread.join(timeout=5)
+
+
+@pytest.mark.integration
+def test_http_transport_accepts_explicit_unauthenticated_remote_binding(tmp_path: Path) -> None:
+    settings = ServerSettings.from_env(
+        {
+            "BLENDER_MCP_WORKSPACE_ROOTS": "workspace",
+            "BLENDER_MCP_CONTROLLER_MODE": "mock",
+            "BLENDER_MCP_CONTROLLER_PORT": str(find_free_port()),
+            "BLENDER_MCP_TRANSPORT": "http",
+            "BLENDER_MCP_HTTP_HOST": "0.0.0.0",
+            "BLENDER_MCP_HTTP_PORT": str(find_free_port()),
+            "BLENDER_MCP_ENABLE_UNAUTHENTICATED_HTTP": "true",
+        },
+        base_dir=tmp_path,
+    )
+
+    assert settings.transport == "http"
+    assert settings.http_host == "0.0.0.0"
+    assert settings.unsafe_http_enabled is True
+    assert settings.http_auth_token is None
+
+
+@pytest.mark.integration
+def test_http_transport_unsafe_mode_accepts_requests_without_auth_and_handles_streamable_http_edges(tmp_path: Path) -> None:
+    app, settings = _make_http_app(
+        tmp_path,
+        BLENDER_MCP_ENABLE_UNAUTHENTICATED_HTTP="true",
+    )
+    thread = _start_http_server(app, settings)
+    try:
+        status, body, _ = _post_json(
+            settings,
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        )
+        notification_status, notification_body, _ = _post_json(
+            settings,
+            {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+        )
+        get_status, get_body, get_headers = _get(settings)
+
+        assert status == 200
+        assert json.loads(body)["result"]["serverInfo"]["name"] == "blender-mcp"
+        assert notification_status == 202
+        assert notification_body == ""
+        assert get_status == 405
+        assert get_headers["Allow"] == "POST, OPTIONS"
+        assert "SSE streams are not supported" in get_body
     finally:
         app.shutdown_http_server()
         thread.join(timeout=5)

@@ -8,7 +8,7 @@ Blender MCP is designed for iterative creative workflows where a user reviews ou
 
 Highlights:
 
-- stdio-first MCP server with optional authenticated local HTTP transport
+- stdio-first MCP server with optional HTTP transport for local or remote MCP clients
 - persistent Blender controller bridge for stateful modeling sessions
 - deterministic mock runtime for CI and local development without Blender
 - typed models and published JSON schemas for requests, results, and domain artifacts
@@ -86,7 +86,8 @@ Blender MCP supports two runtime modes:
 Useful commands:
 
 - `make run-stdio` to launch the stdio server
-- `make run-http-unsafe` to launch an explicit loopback-only debug HTTP server
+- `make run-http-unsafe` to launch an explicit unauthenticated loopback debug HTTP server
+- `make run-http-remote-unsafe` to launch an explicit unauthenticated remote HTTP server on `0.0.0.0`
 - `make test` to run the default regression suite
 - `make test-blender-smoke` to validate a real Blender-backed launch path
 - `make schema-export` to regenerate published schemas
@@ -99,7 +100,7 @@ Blender MCP is intentionally conservative:
 - no arbitrary shell execution is exposed through tool calls
 - file access is restricted to allowlisted workspace roots
 - destructive actions can trigger pre-mutation snapshots based on configured thresholds
-- local HTTP mode requires explicit opt-in and authentication unless unsafe loopback-only debug mode is chosen
+- HTTP mode requires explicit opt-in and authentication unless unauthenticated mode is explicitly enabled
 - controller traffic is authenticated with a shared secret and redacted in logs
 
 ## Configuration
@@ -112,7 +113,10 @@ Important variables include:
 - `BLENDER_MCP_CONTROLLER_MODE`: `mock`, `blender`, or `auto`
 - `BLENDER_MCP_BLENDER_BINARY`: Blender executable path for real runtime launch
 - `BLENDER_MCP_TRANSPORT`: `stdio` or `http`
+- `BLENDER_MCP_HTTP_HOST`: HTTP bind host, for example `127.0.0.1` or `0.0.0.0`
+- `BLENDER_MCP_HTTP_PORT`: HTTP bind port
 - `BLENDER_MCP_HTTP_AUTH_TOKEN`: bearer token for authenticated HTTP mode
+- `BLENDER_MCP_ENABLE_UNAUTHENTICATED_HTTP`: set `true` to allow HTTP without bearer authentication
 - `BLENDER_MCP_CONTROLLER_SECRET`: shared secret for the controller bridge
 - `BLENDER_MCP_MAX_SAFE_MODE_POLYGON_BUDGET`: request budget guard for safe mode
 

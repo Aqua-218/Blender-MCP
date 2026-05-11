@@ -154,13 +154,10 @@ class ServerSettings(BaseModel):
             raise ValueError("Safe-mode polygon budget must be positive")
         if self.metrics_latency_window <= 0:
             raise ValueError("Metrics latency window must be positive")
-        if self.transport == "http":
-            if not self.unsafe_http_enabled and self.http_auth_token is None:
-                raise ValueError(
-                    "HTTP transport requires BLENDER_MCP_HTTP_AUTH_TOKEN unless unsafe HTTP is explicitly enabled"
-                )
-            if self.unsafe_http_enabled and not _is_loopback_host(self.http_host):
-                raise ValueError("Unsafe HTTP transport may only bind to a loopback address")
+        if self.transport == "http" and not self.unsafe_http_enabled and self.http_auth_token is None:
+            raise ValueError(
+                "HTTP transport requires BLENDER_MCP_HTTP_AUTH_TOKEN unless unsafe HTTP is explicitly enabled"
+            )
         return self
 
     @classmethod
