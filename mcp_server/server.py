@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from time import perf_counter
 from typing import Any, TypeVar
 
+from mcp.types import CallToolResult
 from pydantic import BaseModel, ValidationError
 
 from mcp_server.bridge import ControllerBridgeClient, ControllerBridgeError
@@ -89,7 +90,7 @@ def _record_duration_bucket(bucket: dict[str, Any], status: str, latency_ms: flo
 
 
 def _format_tool_call_result(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
+    result = {
         **payload,
         "content": [
             {
@@ -100,6 +101,8 @@ def _format_tool_call_result(payload: dict[str, Any]) -> dict[str, Any]:
         "structuredContent": payload,
         "isError": payload.get("status") == "failed",
     }
+    CallToolResult.model_validate(result)
+    return result
 
 
 @dataclass

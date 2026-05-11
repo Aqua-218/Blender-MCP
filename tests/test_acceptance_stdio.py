@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from mcp.types import CallToolResult
 from tests.port_utils import find_free_port
 
 
@@ -34,6 +35,81 @@ class StdioMCPClient:
         assert self.process.stdin is not None
         self.process.stdin.write(json.dumps(payload) + "\n")
         self.process.stdin.flush()
+
+
+def _assert_call_tool_result(response: dict[str, object]) -> dict[str, object]:
+    assert "error" not in response
+    result = response["result"]
+    assert isinstance(result, dict)
+    validated = CallToolResult.model_validate(result)
+    assert validated.content
+    text_payload = json.loads(validated.content[0].text)
+    assert text_payload == validated.structuredContent
+    assert result["structuredContent"]["status"] == result["status"]
+    assert result["isError"] is (result["status"] == "failed")
+    return result
+
+
+@pytest.mark.integration
+def test_stdio_core_tools_return_mcp_call_tool_results(tmp_path: Path) -> None:
+    port = find_free_port()
+    env = {
+        **os.environ,
+        "BLENDER_MCP_WORKSPACE_ROOTS": str(tmp_path / "workspace"),
+        "BLENDER_MCP_CONTROLLER_MODE": "mock",
+        "BLENDER_MCP_CONTROLLER_PORT": str(port),
+        "BLENDER_MCP_TRANSPORT": "stdio",
+    }
+    process = subprocess.Popen(
+        [sys.executable, "-m", "mcp_server.main", "--transport", "stdio"],
+        cwd=Path.cwd(),
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    client = StdioMCPClient(process)
+    try:
+        initialize = client.request(
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "stdio-envelope-test", "version": "1.0.0"},
+            },
+        )
+        assert initialize["result"]["serverInfo"]["name"] == "blender-mcp"
+        client.notify("notifications/initialized", {})
+
+        ping = _assert_call_tool_result(
+            client.request(
+                "tools/call",
+                {"name": "ping_bridge", "arguments": {"request_id": "stdio-ping"}},
+            )
+        )
+        runtime = _assert_call_tool_result(
+            client.request(
+                "tools/call",
+                {"name": "get_runtime_info", "arguments": {"request_id": "stdio-runtime"}},
+            )
+        )
+        project = _assert_call_tool_result(
+            client.request(
+                "tools/call",
+                {"name": "create_project", "arguments": {"request_id": "stdio-project", "name": "Envelope Project"}},
+            )
+        )
+
+        assert ping["status"] == "success"
+        assert runtime["status"] == "success"
+        assert project["status"] == "success"
+        assert project["project_id"]
+    finally:
+        if process.stdin is not None:
+            process.stdin.close()
+        process.terminate()
+        process.wait(timeout=10)
 
 
 @pytest.mark.integration
