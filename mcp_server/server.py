@@ -88,6 +88,20 @@ def _record_duration_bucket(bucket: dict[str, Any], status: str, latency_ms: flo
     bucket["avg_duration_ms"] = round(float(bucket["total_duration_ms"]) / float(bucket["count"]), 3)
 
 
+def _format_tool_call_result(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **payload,
+        "content": [
+            {
+                "type": "text",
+                "text": json_dumps(payload, pretty=True),
+            }
+        ],
+        "structuredContent": payload,
+        "isError": payload.get("status") == "failed",
+    }
+
+
 @dataclass
 class ToolDefinition:
     name: str
@@ -833,13 +847,14 @@ class MCPServerApplication:
             elif method == "tools/list":
                 result = {"tools": self.list_tools()}
             elif method == "tools/call":
-                result = await self.execute_tool(
+                tool_payload = await self.execute_tool(
                     params["name"],
                     params.get("arguments", {}),
                     role=params.get("role"),
                     authenticated_role=authenticated_role,
                     auth_context=auth_context,
                 )
+                result = _format_tool_call_result(tool_payload)
             elif method == "notifications/initialized":
                 return None
             else:

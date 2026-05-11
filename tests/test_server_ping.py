@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+from mcp.types import CallToolResult
 import pytest
 from mcp_server.config import ServerSettings
 from mcp_server.server import MCPServerApplication
@@ -52,6 +54,10 @@ async def test_server_initialize_tools_list_and_ping(tmp_path):
         assert initialize["result"]["serverInfo"]["name"] == "blender-mcp"
         assert initialize["result"]["protocolVersion"] == "2024-11-05"
         assert {tool["name"] for tool in tools["result"]["tools"]} >= {"ping_bridge", "get_runtime_info"}
+        validated_ping = CallToolResult.model_validate(ping["result"])
+        assert validated_ping.isError is False
+        assert json.loads(validated_ping.content[0].text)["status"] == "success"
+        assert ping["result"]["structuredContent"]["status"] == "success"
         assert ping["result"]["status"] == "success"
         assert app._started is True
 
@@ -67,6 +73,8 @@ async def test_server_initialize_tools_list_and_ping(tmp_path):
                 },
             }
         )
+        validated_role_override = CallToolResult.model_validate(role_override["result"])
+        assert validated_role_override.isError is True
         assert role_override["result"]["status"] == "failed"
         assert "caller-supplied role" in role_override["result"]["summary"].lower()
 
