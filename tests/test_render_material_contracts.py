@@ -143,6 +143,63 @@ async def test_create_material_rejects_unknown_preset(tmp_path: Path) -> None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_pbr_texture_set_classification_and_material_node_setup(tmp_path: Path) -> None:
+    port = find_free_port()
+    settings = ServerSettings.from_env(
+        {
+            "BLENDER_MCP_WORKSPACE_ROOTS": "workspace",
+            "BLENDER_MCP_CONTROLLER_MODE": "mock",
+            "BLENDER_MCP_CONTROLLER_PORT": str(port),
+        },
+        base_dir=tmp_path,
+    )
+    app = MCPServerApplication(settings)
+    try:
+        project = await _call(app, "create_project", {"request_id": "pbr-texture-project", "name": "PBR Textures"})
+        project_id = str(project["project_id"])
+        texture_paths = [
+            "villa_BaseColor_2k.png",
+            "villa_NormalGL_2k.png",
+            "villa_Roughness_2k.jpg",
+            "villa_Metallic_2k.png",
+            "villa_AO_2k.png",
+            "villa_Height_2k.exr",
+            "villa_Opacity_2k.png",
+            "villa_notes.txt",
+        ]
+
+        classified = await _call(
+            app,
+            "classify_pbr_texture_set",
+            {"request_id": "pbr-classify", "project_id": project_id, "texture_paths": texture_paths},
+        )
+        material = await _call(
+            app,
+            "create_pbr_material_from_textures",
+            {
+                "request_id": "pbr-from-textures",
+                "project_id": project_id,
+                "name": "VillaStone",
+                "texture_paths": texture_paths,
+            },
+        )
+
+        assert classified["status"] == "success"
+        assert classified["texture_set"]["roles"]["base_color"]["color_space"] == "sRGB"
+        assert classified["texture_set"]["roles"]["normal"]["color_space"] == "Non-Color"
+        assert classified["texture_set"]["unclassified"] == ["villa_notes.txt"]
+        assert material["status"] == "success"
+        assert material["texture_set"]["detected_roles"] == ["ao", "base_color", "height", "metallic", "normal", "opacity", "roughness"]
+        node_names = {node["node_name"] for node in material["nodes"]}
+        assert {"Principled BSDF", "base_color_texture", "normal_texture", "Normal Map"}.issubset(node_names)
+        linked_sockets = {link["to_socket"] for link in material["links"]}
+        assert {"Base Color", "Normal", "Roughness", "Metallic", "Alpha"}.issubset(linked_sockets)
+    finally:
+        await app.stop()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_apply_material_rejects_targets_without_material_slots(tmp_path: Path) -> None:
     port = find_free_port()
     settings = ServerSettings.from_env(

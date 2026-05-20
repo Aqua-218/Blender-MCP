@@ -17,6 +17,13 @@ from mcp_server.tools.asset_io import (
     export_asset,
     import_asset,
 )
+from mcp_server.tools.game_prep import (
+    CollisionProxyType,
+    CreateCollisionProxySetRequest,
+    CreateLODChainRequest,
+    create_collision_proxy_set,
+    create_lod_chain,
+)
 from mcp_server.tools.helpers import require_project, resolve_target_ids
 from mcp_server.tools.material import ApplyMaterialRequest, apply_material
 from mcp_server.tools.modifiers import AddModifierRequest, ModifierType, add_modifier
@@ -84,6 +91,19 @@ class BatchAddModifierRequest(BatchTargetsRequest):
 class BatchDuplicateObjectsRequest(BatchTargetsRequest):
     location_step: tuple[float, float, float] = (0.0, 0.0, 0.0)
     collection_name: str | None = None
+
+
+class BatchCreateLODChainsRequest(BatchTargetsRequest):
+    levels: int = Field(default=2, ge=1, le=4)
+    base_ratio: float = Field(default=0.5, gt=0.0, le=1.0)
+    group_prefix: str | None = None
+
+
+class BatchCreateCollisionProxiesRequest(BatchTargetsRequest):
+    proxy_types: list[CollisionProxyType] = Field(default_factory=lambda: ["box"])
+    name_prefix: str = "UCX"
+    collection_name: str = "Collision"
+    padding: float = Field(default=0.05, ge=0.0)
 
 
 class BatchExportAssetsRequest(BatchTargetsRequest):
@@ -347,6 +367,77 @@ async def batch_duplicate_objects(context, request: BatchDuplicateObjectsRequest
     )
 
 
+async def batch_create_lod_chains(context, request: BatchCreateLODChainsRequest):  # type: ignore[no-untyped-def]
+    project = require_project(context, request.project_id)
+    target_ids = await _resolve_batch_targets(context, request, "batch_create_lod_chains")
+    if isinstance(target_ids, CommonToolResult):
+        return target_ids
+    created_object_ids: list[str] = []
+    modified_object_ids: list[str] = []
+    objects: list[dict[str, Any]] = []
+    lod_chains: list[dict[str, Any]] = []
+    for index, target_id in enumerate(target_ids, start=1):
+        group_name = f"{request.group_prefix}_{index:02d}" if request.group_prefix else None
+        created = await create_lod_chain(
+            context,
+            CreateLODChainRequest(
+                request_id=f"{request.request_id}-lod-{target_id}",
+                project_id=project.project_id,
+                target_id=target_id,
+                group_name=group_name,
+                levels=request.levels,
+                base_ratio=request.base_ratio,
+            ),
+        )
+        if created.status != "success":
+            return _retag(created, "batch_create_lod_chains")
+        payload = created.model_dump()
+        created_object_ids.extend(payload.get("created_object_ids", []))
+        modified_object_ids.extend(payload.get("modified_object_ids", []))
+        objects.extend(payload.get("objects", []))
+        lod_chains.append(
+            {
+                "source_object_id": target_id,
+                "lod_group": payload.get("lod_group"),
+                "lod_object_ids": payload.get("lod_object_ids", []),
+            }
+        )
+    return success_result(
+        request_id=request.request_id,
+        tool_name="batch_create_lod_chains",
+        summary=f"Created {len(lod_chains)} LOD chains for batch targets.",
+        project_id=project.project_id,
+        created_object_ids=created_object_ids,
+        modified_object_ids=modified_object_ids,
+        objects=objects,
+        lod_chains=lod_chains,
+    )
+
+
+async def batch_create_collision_proxies(context, request: BatchCreateCollisionProxiesRequest):  # type: ignore[no-untyped-def]
+    project = require_project(context, request.project_id)
+    target_ids = await _resolve_batch_targets(context, request, "batch_create_collision_proxies")
+    if isinstance(target_ids, CommonToolResult):
+        return target_ids
+    created = await create_collision_proxy_set(
+        context,
+        CreateCollisionProxySetRequest(
+            request_id=request.request_id,
+            project_id=project.project_id,
+            target_ids=target_ids,
+            proxy_types=request.proxy_types,
+            name_prefix=request.name_prefix,
+            collection_name=request.collection_name,
+            padding=request.padding,
+        ),
+    )
+    return _retag(
+        created,
+        "batch_create_collision_proxies",
+        f"Created collision proxies for {len(target_ids)} batch targets.",
+    )
+
+
 async def batch_export_assets(context, request: BatchExportAssetsRequest):  # type: ignore[no-untyped-def]
     project = require_project(context, request.project_id)
     target_ids = await _resolve_batch_targets(context, request, "batch_export_assets")
@@ -463,6 +554,8 @@ def register_tools(app) -> None:  # type: ignore[no-untyped-def]
         ("batch_apply_material", "Apply one material to resolved batch targets.", BatchApplyMaterialRequest, batch_apply_material, False),
         ("batch_add_modifier", "Add the same modifier to resolved batch targets.", BatchAddModifierRequest, batch_add_modifier, False),
         ("batch_duplicate_objects", "Duplicate resolved batch targets with an optional stepped offset.", BatchDuplicateObjectsRequest, batch_duplicate_objects, False),
+        ("batch_create_lod_chains", "Create LOD chains for resolved batch targets.", BatchCreateLODChainsRequest, batch_create_lod_chains, False),
+        ("batch_create_collision_proxies", "Create collision proxies for resolved batch targets.", BatchCreateCollisionProxiesRequest, batch_create_collision_proxies, False),
         ("batch_export_assets", "Export resolved batch targets as one or more asset files.", BatchExportAssetsRequest, batch_export_assets, False),
         ("batch_import_assets", "Import multiple asset files into the active project.", BatchImportAssetsRequest, batch_import_assets, False),
     ]

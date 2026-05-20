@@ -17,6 +17,8 @@ BATCH_TOOLS = {
     "batch_apply_material",
     "batch_add_modifier",
     "batch_duplicate_objects",
+    "batch_create_lod_chains",
+    "batch_create_collision_proxies",
     "batch_export_assets",
     "batch_import_assets",
 }
@@ -125,6 +127,28 @@ async def test_batch_operations_compose_existing_tools(tmp_path: Path) -> None:
                 "collection_name": "BatchCopies",
             },
         )
+        lod_chains = await _call(
+            app,
+            "batch_create_lod_chains",
+            {
+                "request_id": "req-batch-lod",
+                "project_id": project_id,
+                "target_ids": ids[:2],
+                "levels": 1,
+                "group_prefix": "BatchLOD",
+            },
+        )
+        collision = await _call(
+            app,
+            "batch_create_collision_proxies",
+            {
+                "request_id": "req-batch-collision",
+                "project_id": project_id,
+                "target_ids": ids[:2],
+                "proxy_types": ["box"],
+                "collection_name": "BatchCollision",
+            },
+        )
         exported = await _call(
             app,
             "batch_export_assets",
@@ -162,6 +186,10 @@ async def test_batch_operations_compose_existing_tools(tmp_path: Path) -> None:
         assert set(applied["modified_object_ids"]) == set(ids)
         assert len(modified["modifiers"]) >= 3
         assert len(duplicated["created_object_ids"]) == 2
+        assert len(lod_chains["lod_chains"]) == 2
+        assert len(lod_chains["created_object_ids"]) == 2
+        assert len(collision["created_object_ids"]) == 2
+        assert {item["collection"] for item in collision["objects"]} == {"BatchCollision"}
         assert len(exported["file_paths"]) == 2
         assert all(Path(path).exists() for path in exported["file_paths"])
         assert len(imported["created_object_ids"]) >= 2

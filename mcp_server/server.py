@@ -448,6 +448,7 @@ class MCPServerApplication:
             batch_ops,
             camera,
             collections,
+            foundation,
             game_prep,
             geometry,
             geometry_nodes,
@@ -470,7 +471,7 @@ class MCPServerApplication:
             world,
         )
 
-        for module in (project, object, geometry, material, render, camera, lighting, game_prep, production_pipeline, aaa_orchestrator, aaa_workflows, asset_io, asset_library, batch_ops, qa, repair, modifiers, collections, transforms, selection_sets, parts, model_generation, history, scene, world, geometry_nodes, texture_uv, animation_rigging):
+        for module in (project, object, geometry, material, render, camera, lighting, foundation, game_prep, production_pipeline, aaa_orchestrator, aaa_workflows, asset_io, asset_library, batch_ops, qa, repair, modifiers, collections, transforms, selection_sets, parts, model_generation, history, scene, world, geometry_nodes, texture_uv, animation_rigging):
             module.register_tools(self)
         self.register_tool(
             ToolDefinition(

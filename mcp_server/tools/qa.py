@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import html
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from mcp_server.models.common import CommonToolRequest, failed_result, success_result
-from mcp_server.tools.helpers import require_project, resolve_target_ids
+from mcp_server.serialization import json_loads
+from mcp_server.tools.helpers import project_paths_for_record, require_project, resolve_target_ids
 from mcp_server.utils import new_id
 
 Severity = Literal["info", "warning", "error"]
@@ -65,6 +67,7 @@ class CheckExportReadinessRequest(CommonToolRequest):
 class GenerateQAReportRequest(CommonToolRequest):
     project_id: str
     scope: Literal["scene", "mesh", "export"] = "scene"
+    output_formats: list[Literal["html", "pdf"]] = Field(default_factory=list)
     target_id: str | None = None
     target_ids: list[str] = Field(default_factory=list)
     names: list[str] = Field(default_factory=list)
@@ -125,6 +128,126 @@ def _scene_findings(objects: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
         "mesh_face_count": total_faces,
     }
     return findings, metrics
+
+
+def _asset_quality_findings(assets: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    metrics: dict[str, Any] = {
+        "asset_count": len(assets),
+        "quality_check_count": 0,
+        "failed_check_count": 0,
+        "checks": {},
+    }
+    checks_by_name: dict[str, dict[str, int]] = metrics["checks"]
+    for asset in assets:
+        quality_checks = ((asset.get("metadata", {}) or {}).get("quality_checks", {}) or {})
+        if not isinstance(quality_checks, dict):
+            continue
+        for check_name, check in quality_checks.items():
+            if not isinstance(check, dict):
+                continue
+            status = str(check.get("status", "unknown"))
+            metrics["quality_check_count"] += 1
+            check_metrics = checks_by_name.setdefault(check_name, {"passed_count": 0, "failed_count": 0, "unknown_count": 0})
+            if status == "passed":
+                check_metrics["passed_count"] += 1
+                continue
+            if status == "failed":
+                check_metrics["failed_count"] += 1
+                metrics["failed_check_count"] += 1
+                finding: dict[str, Any] = {
+                    "severity": "error" if check_name == "facade_opening_attachment" else "warning",
+                    "code": "asset_quality_check_failed",
+                    "message": f"Asset '{asset.get('name', asset.get('asset_id'))}' failed quality check '{check_name}'.",
+                    "asset_id": asset.get("asset_id"),
+                    "asset_name": asset.get("name"),
+                    "check_name": check_name,
+                }
+                for count_key in ("checked_count", "attached_count", "floating_count"):
+                    if count_key in check:
+                        finding[count_key] = check[count_key]
+                floating_openings = [opening for opening in check.get("openings", []) if opening.get("status") != "attached"]
+                if floating_openings:
+                    finding["floating_openings"] = floating_openings
+                    finding["object_ids"] = [opening["object_id"] for opening in floating_openings if "object_id" in opening]
+                findings.append(finding)
+                continue
+            check_metrics["unknown_count"] += 1
+            findings.append(
+                {
+                    "severity": "warning",
+                    "code": "asset_quality_check_unknown_status",
+                    "message": f"Asset '{asset.get('name', asset.get('asset_id'))}' has unknown status '{status}' for quality check '{check_name}'.",
+                    "asset_id": asset.get("asset_id"),
+                    "asset_name": asset.get("name"),
+                    "check_name": check_name,
+                    "status": status,
+                }
+            )
+    return findings, metrics
+
+
+def _qa_report_lines(report_payload: dict[str, Any], severity_summary: dict[str, int]) -> list[str]:
+    lines = [str(report_payload.get("summary", "QA report")), f"Scope: {report_payload.get('scope', 'scene')}"]
+    lines.append(f"Severity: info={severity_summary.get('info', 0)} warning={severity_summary.get('warning', 0)} error={severity_summary.get('error', 0)}")
+    findings = list(report_payload.get("findings", []))
+    if not findings:
+        lines.append("No findings.")
+    for index, finding in enumerate(findings, start=1):
+        lines.append(f"{index}. [{finding.get('severity', 'info')}] {finding.get('code', 'finding')}: {finding.get('message', '')}")
+    return lines
+
+
+def _minimal_pdf_bytes(lines: list[str]) -> bytes:
+    escaped_lines = [line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")[:180] for line in lines[:45]]
+    text_ops = ["BT /F1 10 Tf 50 780 Td"]
+    for index, line in enumerate(escaped_lines):
+        if index:
+            text_ops.append("0 -14 Td")
+        text_ops.append(f"({line}) Tj")
+    text_ops.append("ET")
+    stream = "\n".join(text_ops).encode("latin-1", errors="replace")
+    objects = [
+        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
+        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n",
+        b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj\n",
+        b"4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n",
+        b"5 0 obj << /Length " + str(len(stream)).encode("ascii") + b" >> stream\n" + stream + b"\nendstream endobj\n",
+    ]
+    payload = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for item in objects:
+        offsets.append(len(payload))
+        payload.extend(item)
+    xref_offset = len(payload)
+    payload.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    payload.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        payload.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    payload.extend(f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n".encode("ascii"))
+    return bytes(payload)
+
+
+def _write_qa_report_files(context, project, qa_report_id: str, report_payload: dict[str, Any], severity_summary: dict[str, int], output_formats: list[str]) -> list[str]:  # type: ignore[no-untyped-def]
+    if not output_formats:
+        return []
+    project_paths = project_paths_for_record(context, project)
+    context.workspace.ensure_project_layout(project_paths)
+    report_dir = project_paths.export_dir / "qa-reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    lines = _qa_report_lines(report_payload, severity_summary)
+    file_paths: list[str] = []
+    if "html" in output_formats:
+        findings_html = "\n".join(f"<li><code>{html.escape(str(line))}</code></li>" for line in lines[2:])
+        html_payload = f"<!doctype html><html><head><meta charset='utf-8'><title>{html.escape(qa_report_id)}</title></head><body><h1>{html.escape(lines[0])}</h1><p>{html.escape(lines[1])}</p><ul>{findings_html}</ul></body></html>"
+        html_path = report_dir / f"{qa_report_id}.html"
+        html_path.write_text(html_payload, encoding="utf-8")
+        file_paths.append(str(html_path))
+    if "pdf" in output_formats:
+        pdf_path = report_dir / f"{qa_report_id}.pdf"
+        pdf_path.write_bytes(_minimal_pdf_bytes(lines))
+        file_paths.append(str(pdf_path))
+    return file_paths
 
 
 def _mesh_findings(mesh_object: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -213,10 +336,17 @@ async def _list_project_objects(context, project_id: str) -> list[dict[str, Any]
     return list(listed.get("objects", []))
 
 
+def _list_project_assets(context, project_id: str) -> list[dict[str, Any]]:  # type: ignore[no-untyped-def]
+    return [json_loads(record.spec_json) for record in context.entities.list_by_type(project_id, "asset")]
+
+
 async def inspect_scene(context, request: InspectSceneRequest):  # type: ignore[no-untyped-def]
     project = require_project(context, request.project_id)
     objects = await _list_project_objects(context, project.project_id)
     findings, metrics = _scene_findings(objects)
+    asset_findings, asset_quality_metrics = _asset_quality_findings(_list_project_assets(context, project.project_id))
+    findings.extend(asset_findings)
+    metrics["asset_quality"] = asset_quality_metrics
     return success_result(
         request_id=request.request_id,
         tool_name="inspect_scene",
@@ -528,6 +658,9 @@ async def generate_qa_report(context, request: GenerateQAReportRequest):  # type
         "metrics": metrics,
         "scope": request.scope,
     }
+    file_paths = _write_qa_report_files(context, project, qa_report_id, report_payload, severity_summary, request.output_formats)
+    if file_paths:
+        report_payload["file_paths"] = file_paths
     record = context.qa_reports.create(
         qa_report_id=qa_report_id,
         project_id=project.project_id,
@@ -545,6 +678,7 @@ async def generate_qa_report(context, request: GenerateQAReportRequest):  # type
         report=report_payload,
         severity_summary=severity_summary,
         blocked_export_formats=blocked_export_formats,
+        file_paths=file_paths,
     )
 
 

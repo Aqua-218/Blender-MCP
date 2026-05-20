@@ -64,6 +64,75 @@ async def test_inspect_scene_returns_quality_metrics(tmp_path: Path) -> None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_inspect_scene_surfaces_failed_asset_quality_checks(tmp_path: Path) -> None:
+    port = find_free_port()
+    settings = ServerSettings.from_env(
+        {
+            "BLENDER_MCP_WORKSPACE_ROOTS": "workspace",
+            "BLENDER_MCP_CONTROLLER_MODE": "mock",
+            "BLENDER_MCP_CONTROLLER_PORT": str(port),
+        },
+        base_dir=tmp_path,
+    )
+    app = MCPServerApplication(settings)
+    try:
+        project = await _call(app, "create_project", {"request_id": "req-qa-asset-project", "name": "QA Asset"})
+        project_id = str(project["project_id"])
+        app.context.entities.upsert(
+            entity_id="asset-floating-mansion",
+            project_id=project_id,
+            entity_type="asset",
+            name="Floating Mansion",
+            spec={
+                "asset_id": "asset-floating-mansion",
+                "name": "Floating Mansion",
+                "category": "building",
+                "purpose": "prototype",
+                "target_quality": "standard",
+                "parts": [],
+                "materials": [],
+                "metadata": {
+                    "quality_checks": {
+                        "facade_opening_attachment": {
+                            "status": "failed",
+                            "checked_count": 2,
+                            "attached_count": 1,
+                            "floating_count": 1,
+                            "openings": [
+                                {
+                                    "name": "window_1",
+                                    "kind": "window",
+                                    "status": "floating",
+                                    "object_id": "obj-floating-window",
+                                    "overlap": 0.0,
+                                    "required_overlap": 0.01,
+                                }
+                            ],
+                        }
+                    }
+                },
+            },
+        )
+
+        inspected = await _call(
+            app,
+            "inspect_scene",
+            {"request_id": "req-qa-inspect-asset-quality", "project_id": project_id},
+        )
+
+        assert inspected["status"] == "success"
+        assert inspected["metrics"]["asset_quality"]["failed_check_count"] == 1
+        finding = next(item for item in inspected["findings"] if item["code"] == "asset_quality_check_failed")
+        assert finding["severity"] == "error"
+        assert finding["check_name"] == "facade_opening_attachment"
+        assert finding["floating_count"] == 1
+        assert finding["object_ids"] == ["obj-floating-window"]
+    finally:
+        await app.stop()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_inspect_mesh_rejects_non_mesh_target(tmp_path: Path) -> None:
     port = find_free_port()
     settings = ServerSettings.from_env(
@@ -138,17 +207,26 @@ async def test_generate_qa_report_persists_report_record(tmp_path: Path) -> None
                 "request_id": "req-qa-generate-scene",
                 "project_id": project_id,
                 "scope": "scene",
+                "output_formats": ["html", "pdf"],
             },
         )
 
         assert report["status"] == "success"
         qa_report_id = str(report["qa_report_id"])
+        assert len(report["file_paths"]) == 2
+        html_path = Path(str(next(path for path in report["file_paths"] if str(path).endswith(".html"))))
+        pdf_path = Path(str(next(path for path in report["file_paths"] if str(path).endswith(".pdf"))))
+        assert html_path.exists()
+        assert pdf_path.exists()
+        assert "QA report generated" in html_path.read_text(encoding="utf-8")
+        assert pdf_path.read_bytes().startswith(b"%PDF-1.4")
         with app.context.db.session() as session:
             persisted = session.get(QAReportRecord, qa_report_id)
         assert persisted is not None
         report_json = decode_json_column(persisted.report_json)
         assert report_json["scope"] == "scene"
         assert isinstance(report_json["findings"], list)
+        assert report_json["file_paths"] == report["file_paths"]
     finally:
         await app.stop()
 

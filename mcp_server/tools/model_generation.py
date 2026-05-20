@@ -41,6 +41,8 @@ HardSurfaceType = Literal["drone"]
 RestyleStyle = Literal["industrial", "low-poly", "miniature", "premium", "realistic", "ruined", "sci-fi"]
 
 DETAIL_LEVELS: list[DetailLevel] = ["draft", "base", "refined", "hero"]
+_BUILDING_FACADE_OVERLAP = 0.01
+_BUILDING_ATTACHMENT_TOLERANCE = 1e-9
 
 
 class BaseGenerationRequest(CommonToolRequest):
@@ -182,6 +184,38 @@ def _load_asset(context, asset_id: str | None) -> dict[str, Any] | None:  # type
 
 def _asset_parts(asset: dict[str, Any] | None) -> list[dict[str, Any]]:
     return list(asset.get("parts", [])) if asset else []
+
+
+def _cube_bounds(location: list[float], scale: list[float]) -> dict[str, list[float]]:
+    half_extents = [component * 0.5 for component in scale]
+    return {
+        "min": [location[index] - half_extents[index] for index in range(3)],
+        "max": [location[index] + half_extents[index] for index in range(3)],
+    }
+
+
+def _front_facade_center_y(depth: float, element_depth: float) -> float:
+    return (depth / 2.0) + max((element_depth * 0.5) - _BUILDING_FACADE_OVERLAP, 0.0)
+
+
+def _front_facade_attachment(location: list[float], scale: list[float], facade_plane_y: float) -> dict[str, Any]:
+    bounds = _cube_bounds(location, scale)
+    back_face_y = round(bounds["min"][1], 9)
+    front_face_y = round(bounds["max"][1], 9)
+    overlap = round(max(0.0, facade_plane_y - back_face_y), 9)
+    status = "attached" if overlap + _BUILDING_ATTACHMENT_TOLERANCE >= _BUILDING_FACADE_OVERLAP else "floating"
+    return {
+        "status": status,
+        "surface": "front_facade",
+        "axis": "Y",
+        "normal": [0.0, 1.0, 0.0],
+        "facade_plane_y": facade_plane_y,
+        "back_face_y": back_face_y,
+        "front_face_y": front_face_y,
+        "required_overlap": _BUILDING_FACADE_OVERLAP,
+        "overlap": overlap,
+        "bounds": bounds,
+    }
 
 
 def _persist_asset(context, project_id: str, asset: dict[str, Any]) -> None:  # type: ignore[no-untyped-def]
@@ -786,6 +820,7 @@ async def create_building(context, request: CreateBuildingRequest):  # type: ign
     collection_name = f"{asset_name} Collection"
     created_objects: dict[str, dict[str, Any]] = {}
     part_specs: list[dict[str, Any]] = []
+    opening_attachments: list[dict[str, Any]] = []
 
     facade_material = await _create_pbr_material_for_style(
         context,
@@ -834,6 +869,7 @@ async def create_building(context, request: CreateBuildingRequest):  # type: ign
         )
 
     common_tags = ["generated", "building", f"asset:{asset_id}"]
+    facade_plane_y = request.depth / 2.0
     shell = await _create_primitive_part(
         context,
         request,
@@ -900,6 +936,8 @@ async def create_building(context, request: CreateBuildingRequest):  # type: ign
         x_offset = ((index % 2) - 0.5) * (request.width * 0.38)
         floor_index = index // 2
         z_coord = 1.2 + (floor_index * max(1.4, request.height / max(request.floors, 1)))
+        window_scale = [max(0.25, request.width * 0.08), 0.05, max(0.45, request.height * 0.06)]
+        window_location = [x_offset, _front_facade_center_y(request.depth, window_scale[1]), z_coord]
         window = await _create_primitive_part(
             context,
             request,
@@ -907,13 +945,19 @@ async def create_building(context, request: CreateBuildingRequest):  # type: ign
             primitive_type="cube",
             collection_name=collection_name,
             tags=[*common_tags, f"part:window_{index + 1}"],
-            location=[x_offset, (request.depth / 2.0) + 0.06, z_coord],
-            scale=[max(0.25, request.width * 0.08), 0.05, max(0.45, request.height * 0.06)],
+            location=window_location,
+            scale=window_scale,
         )
         if window.status != "success":
             return _retag_result(window, "create_building")
         _merge_objects(created_objects, window.model_dump().get("objects"))
         window_object_id = window.created_object_ids[0]
+        window_attachment = {
+            **_front_facade_attachment(window_location, window_scale, facade_plane_y),
+            "object_id": window_object_id,
+            "floor": floor_index + 1,
+        }
+        opening_attachments.append({"name": f"window_{index + 1}", "kind": "window", **window_attachment})
         window_applied = await _apply_material_to_targets(context, request.request_id, request.project_id, glass_material_id, [window_object_id])
         if window_applied.status not in {"success", "partial_success"}:
             return _retag_result(window_applied, "create_building")
@@ -925,13 +969,15 @@ async def create_building(context, request: CreateBuildingRequest):  # type: ign
             name=f"window_{index + 1}",
             kind="window",
             target_ids=[window_object_id],
-            metadata={"floor": floor_index + 1},
+            metadata={"floor": floor_index + 1, "attachment": window_attachment},
         )
         if window_part.status != "success":
             return _retag_result(window_part, "create_building")
         part_specs.append(window_part.model_dump()["part"])
 
     if request.include_door:
+        door_scale = [max(0.35, request.width * 0.09), 0.06, 0.9]
+        door_location = [0.0, _front_facade_center_y(request.depth, door_scale[1]), 0.95]
         door = await _create_primitive_part(
             context,
             request,
@@ -939,13 +985,18 @@ async def create_building(context, request: CreateBuildingRequest):  # type: ign
             primitive_type="cube",
             collection_name=collection_name,
             tags=[*common_tags, "part:door"],
-            location=[0.0, (request.depth / 2.0) + 0.07, 0.95],
-            scale=[max(0.35, request.width * 0.09), 0.06, 0.9],
+            location=door_location,
+            scale=door_scale,
         )
         if door.status != "success":
             return _retag_result(door, "create_building")
         _merge_objects(created_objects, door.model_dump().get("objects"))
         door_object_id = door.created_object_ids[0]
+        door_attachment = {
+            **_front_facade_attachment(door_location, door_scale, facade_plane_y),
+            "object_id": door_object_id,
+        }
+        opening_attachments.append({"name": "door", "kind": "door", **door_attachment})
         door_applied = await _apply_material_to_targets(context, request.request_id, request.project_id, door_material_id, [door_object_id])
         if door_applied.status not in {"success", "partial_success"}:
             return _retag_result(door_applied, "create_building")
@@ -957,10 +1008,31 @@ async def create_building(context, request: CreateBuildingRequest):  # type: ign
             name="door",
             kind="door",
             target_ids=[door_object_id],
+            metadata={"attachment": door_attachment},
         )
         if door_part.status != "success":
             return _retag_result(door_part, "create_building")
         part_specs.append(door_part.model_dump()["part"])
+
+    floating_openings = [opening for opening in opening_attachments if opening["status"] != "attached"]
+    quality_checks = {
+        "facade_opening_attachment": {
+            "status": "passed" if not floating_openings else "failed",
+            "checked_count": len(opening_attachments),
+            "attached_count": len(opening_attachments) - len(floating_openings),
+            "floating_count": len(floating_openings),
+            "required_overlap": _BUILDING_FACADE_OVERLAP,
+            "axis": "Y",
+            "facade_plane_y": facade_plane_y,
+            "openings": opening_attachments,
+        },
+        "design_bounds": {
+            "shell": {
+                "min": [-request.width / 2.0, -request.depth / 2.0, 0.0],
+                "max": [request.width / 2.0, request.depth / 2.0, request.height],
+            }
+        },
+    }
 
     asset = AssetSpec(
         asset_id=asset_id,
@@ -980,6 +1052,7 @@ async def create_building(context, request: CreateBuildingRequest):  # type: ign
             "collection_name": collection_name,
             "root_object_ids": list(created_objects),
             "floors": request.floors,
+            "quality_checks": quality_checks,
         },
     ).model_dump()
     _persist_asset(context, project.project_id, asset)
@@ -994,6 +1067,7 @@ async def create_building(context, request: CreateBuildingRequest):  # type: ign
         materials=[facade_material.model_dump()["material"], glass_material.model_dump()["material"], door_material.model_dump()["material"]],
         objects=list(created_objects.values()),
         created_object_ids=list(created_objects),
+        quality_checks=quality_checks,
         next_suggestions=["inspect_scale", "render_preview"],
     )
 

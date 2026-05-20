@@ -206,6 +206,185 @@ async def test_single_object_tools_enforce_cardinality_and_resolve_by_tag_or_col
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_scene_and_object_bounds_return_world_space_dimensions(tmp_path: Path) -> None:
+    app = _build_app(tmp_path)
+    try:
+        project = await _call(app, "create_project", {"request_id": "req-bounds-project", "name": "Bounds Demo"})
+        project_id = str(project["project_id"])
+        cube = await _call(
+            app,
+            "create_primitive",
+            {
+                "request_id": "req-bounds-cube",
+                "project_id": project_id,
+                "primitive_type": "cube",
+                "name": "BoundsCube",
+                "location": [1.0, 2.0, 3.0],
+                "scale": [2.0, 4.0, 6.0],
+            },
+        )
+        object_id = str(cube["created_object_ids"][0])
+
+        object_bounds = await _call(
+            app,
+            "get_object_bounds",
+            {"request_id": "req-object-bounds", "project_id": project_id, "target_id": object_id},
+        )
+        scene_bounds = await _call(
+            app,
+            "get_scene_bounds",
+            {"request_id": "req-scene-bounds", "project_id": project_id, "object_type": "mesh"},
+        )
+
+        assert object_bounds["status"] == "success"
+        assert object_bounds["bounds"] == {
+            "min": [0.0, 0.0, 0.0],
+            "max": [2.0, 4.0, 6.0],
+            "center": [1.0, 2.0, 3.0],
+            "dimensions": [2.0, 4.0, 6.0],
+        }
+        assert object_bounds["coordinate_system"] == {"up_axis": "Z", "forward_axis": "Y", "handedness": "right"}
+        assert scene_bounds["status"] == "success"
+        assert scene_bounds["bounds"] == object_bounds["bounds"]
+        assert scene_bounds["object_count"] == 1
+        for tool_name in ("get_scene_bounds", "get_object_bounds"):
+            decision = app.context.policy.authorize(
+                tool_name=tool_name,
+                role="viewer",
+                destructive_confirmation=False,
+                blast_radius=0,
+                overwrite=False,
+            )
+            assert decision.allowed is True
+    finally:
+        await app.stop()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_preview_delete_objects_resolves_targets_without_mutating(tmp_path: Path) -> None:
+    app = _build_app(tmp_path)
+    try:
+        project = await _call(app, "create_project", {"request_id": "req-preview-delete-project", "name": "Preview Delete"})
+        project_id = str(project["project_id"])
+        cube = await _call(
+            app,
+            "create_primitive",
+            {
+                "request_id": "req-preview-delete-cube",
+                "project_id": project_id,
+                "primitive_type": "cube",
+                "name": "PreviewDeleteCube",
+                "tags": ["discard"],
+            },
+        )
+        object_id = str(cube["created_object_ids"][0])
+
+        preview = await _call(
+            app,
+            "preview_delete_objects",
+            {"request_id": "req-preview-delete", "project_id": project_id, "tag": "discard"},
+        )
+        listed = await _call(app, "list_objects", {"request_id": "req-preview-delete-list", "project_id": project_id})
+
+        assert preview["status"] == "success"
+        assert preview["dry_run"] is True
+        assert preview["would_delete_object_ids"] == [object_id]
+        assert preview["affected_object_count"] == 1
+        assert [item["object_id"] for item in listed["objects"]] == [object_id]
+        decision = app.context.policy.authorize(
+            tool_name="preview_delete_objects",
+            role="viewer",
+            destructive_confirmation=False,
+            blast_radius=1,
+            overwrite=False,
+        )
+        assert decision.allowed is True
+    finally:
+        await app.stop()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_find_objects_supports_advanced_name_visibility_size_and_polycount_filters(tmp_path: Path) -> None:
+    app = _build_app(tmp_path)
+    try:
+        project = await _call(app, "create_project", {"request_id": "req-advanced-find-project", "name": "Advanced Find"})
+        project_id = str(project["project_id"])
+        window = await _call(
+            app,
+            "create_primitive",
+            {
+                "request_id": "req-advanced-find-window",
+                "project_id": project_id,
+                "primitive_type": "cube",
+                "name": "Window_Main_A",
+                "location": [2.0, 0.0, 0.0],
+                "scale": [2.0, 3.0, 4.0],
+                "collection_name": "Facade",
+                "tags": ["window"],
+            },
+        )
+        window_id = str(window["created_object_ids"][0])
+        hidden = await _call(
+            app,
+            "create_primitive",
+            {
+                "request_id": "req-advanced-find-hidden",
+                "project_id": project_id,
+                "primitive_type": "cube",
+                "name": "Hidden_Service_B",
+            },
+        )
+        hidden_id = str(hidden["created_object_ids"][0])
+        await _call(
+            app,
+            "set_object_visibility",
+            {"request_id": "req-advanced-find-hide", "project_id": project_id, "target_id": hidden_id, "visible": False},
+        )
+
+        advanced = await _call(
+            app,
+            "find_objects",
+            {
+                "request_id": "req-advanced-find",
+                "project_id": project_id,
+                "name_pattern": "Window_*",
+                "name_regex": "Main_[A-Z]$",
+                "name_prefix": "Window_",
+                "name_suffix": "_A",
+                "object_type": "mesh",
+                "tag": "window",
+                "collection_name": "Facade",
+                "visible": True,
+                "spatial_range": {"min": [1.0, -1.0, -1.0], "max": [3.0, 1.0, 1.0]},
+                "min_dimensions": [1.9, 2.9, 3.9],
+                "max_dimensions": [2.1, 3.1, 4.1],
+                "min_polycount": 12,
+                "max_polycount": 12,
+            },
+        )
+        hidden_search = await _call(
+            app,
+            "find_objects",
+            {"request_id": "req-advanced-find-hidden-search", "project_id": project_id, "visible": False},
+        )
+        invalid_regex = await _call(
+            app,
+            "find_objects",
+            {"request_id": "req-advanced-find-invalid", "project_id": project_id, "name_regex": "["},
+        )
+
+        assert [item["object_id"] for item in advanced["objects"]] == [window_id]
+        assert [item["object_id"] for item in hidden_search["objects"]] == [hidden_id]
+        assert invalid_regex["status"] == "failed"
+        assert "invalid name_regex" in invalid_regex["errors"][0]
+    finally:
+        await app.stop()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_geometry_validation_and_render_controls_on_mock_runtime(tmp_path: Path) -> None:
     app = _build_app(tmp_path)
     try:

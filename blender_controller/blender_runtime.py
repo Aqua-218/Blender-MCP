@@ -141,6 +141,16 @@ class BlenderRuntime(BaseRuntime):
     async def cmd_list_objects(self, _payload: dict[str, Any]) -> dict[str, Any]:
         return {"objects": [self._object_payload(obj, persist_id=False) for obj in self.bpy.data.objects]}
 
+    def _safe_python_context(self) -> dict[str, Any]:  # type: ignore[override]
+        return {
+            "project": self._project_metadata(),
+            "objects": [self._object_payload(obj, persist_id=False) for obj in self.bpy.data.objects],
+            "materials": [self._material_payload(material) for material in self.bpy.data.materials],
+            "lights": [self._light_payload(obj) for obj in self.bpy.data.objects if obj.type == "LIGHT"],
+            "cameras": [self._camera_payload(obj) for obj in self.bpy.data.objects if obj.type == "CAMERA"],
+            "selected_ids": [self._ensure_object_id(obj) for obj in self.bpy.context.selected_objects],
+        }
+
     async def cmd_find_objects(self, payload: dict[str, Any]) -> dict[str, Any]:
         objects = [obj for obj in self.bpy.data.objects if self._object_matches(obj, payload)]
         return {"objects": [self._object_payload(obj, persist_id=False) for obj in objects]}

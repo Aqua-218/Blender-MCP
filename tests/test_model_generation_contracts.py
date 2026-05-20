@@ -185,7 +185,16 @@ async def test_category_specific_building_and_furniture_generation_succeed(tmp_p
         assert building["status"] == "success"
         building_part_names = {part["name"] for part in building["parts"]}
         assert {"shell", "roof", "door"}.issubset(building_part_names)
-        assert sum(1 for part in building["parts"] if part["kind"] == "window") >= 4
+        window_parts = [part for part in building["parts"] if part["kind"] == "window"]
+        assert len(window_parts) >= 4
+        attachment_check = building["quality_checks"]["facade_opening_attachment"]
+        assert attachment_check["status"] == "passed"
+        assert attachment_check["floating_count"] == 0
+        assert attachment_check["checked_count"] == len(window_parts) + 1
+        for opening in attachment_check["openings"]:
+            assert opening["status"] == "attached"
+            assert opening["overlap"] >= opening["required_overlap"]
+        assert all(part["metadata"]["attachment"]["status"] == "attached" for part in window_parts)
 
         furniture = await _call(
             app,
